@@ -1,0 +1,42 @@
+name: skill-ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  mempalace-librarian:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: /home/runner/work/agent-skills/agent-skills
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Syntax check
+        run: |
+          python -m py_compile \
+            skills/mempalace-librarian/scripts/setup_mempalace.py \
+            skills/mempalace-librarian/tests/test_setup_mempalace.py
+
+      - name: Unit tests
+        run: |
+          python -m unittest discover \
+            -s skills/mempalace-librarian/tests \
+            -p 'test_*.py' -v
+
+      - name: Dry-run Codex setup
+        run: |
+          python skills/mempalace-librarian/scripts/setup_mempalace.py \
+            --dry-run --harness codex
+
+      - name: Dry-run Gemini setup
+        run: |
+          python skills/mempalace-librarian/scripts/setup_mempalace.py \
+            --dry-run --harness gemini
