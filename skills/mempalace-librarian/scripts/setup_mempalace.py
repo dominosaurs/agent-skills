@@ -389,13 +389,15 @@ def configure_claude_mcp(venv_python: Path, palace: str | None, dry_run: bool) -
     run([claude, "mcp", "add", "mempalace", "--", str(venv_python), *mcp_args(palace)], dry_run=dry_run)
 
 
-def resolve_gemini_precompress_command(venv_python: Path, repo: Path) -> str:
+def resolve_gemini_precompress_command(venv_python: Path, repo: Path, dry_run: bool = False) -> str:
     packaged = venv_python.parent.parent / "mempalace" / "hooks" / "mempal_precompact_hook.sh"
     if packaged.exists():
         return str(packaged)
     repo_hook = repo / "hooks" / "mempal_precompact_hook.sh"
     if repo_hook.exists():
         return str(repo_hook)
+    if dry_run:
+        return str(packaged)
     raise SystemExit("Gemini hook script not found for MemPalace")
 
 
@@ -414,7 +416,7 @@ def ensure_gemini_settings(
     }
 
     hooks = data.setdefault("hooks", {})
-    precompress_cmd = resolve_gemini_precompress_command(venv_python, repo)
+    precompress_cmd = resolve_gemini_precompress_command(venv_python, repo, dry_run=dry_run)
     precompress_wrapper = {
         "matcher": "*",
         "hooks": [{"type": "command", "command": precompress_cmd}],

@@ -318,6 +318,16 @@ class SetupMempalaceTests(unittest.TestCase):
             ]
             self.assertEqual(commands, [str(new_hook)])
 
+    def test_resolve_gemini_precompress_command_allows_dry_run_without_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            command = setup_mempalace.resolve_gemini_precompress_command(
+                tmp_path / ".venv" / "bin" / "python",
+                tmp_path / "missing-repo",
+                dry_run=True,
+            )
+        self.assertTrue(command.endswith("/mempalace/hooks/mempal_precompact_hook.sh"))
+
     def test_verify_mcp_server_requires_status_tool(self) -> None:
         proc = mock.Mock()
         proc.stdin = mock.Mock()
