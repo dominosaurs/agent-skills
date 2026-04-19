@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Sequence
 
@@ -16,36 +18,30 @@ except ModuleNotFoundError:  # pragma: no cover
 
 
 HOME = Path.home()
-DEFAULT_VENV = HOME / ".mempalace" / "venv"
 DEFAULT_LOCAL_REPO = HOME / "codes" / "mempalace"
-FALLBACK_EXISTING_VENV = HOME / ".venv" / "bin" / "python"
 CODEX_CONFIG = HOME / ".codex" / "config.toml"
 CODEX_HOOKS = HOME / ".codex" / "hooks.json"
 CLAUDE_SETTINGS = HOME / ".claude" / "settings.local.json"
 GEMINI_SETTINGS = HOME / ".gemini" / "settings.json"
 SUPPORTED_PROTOCOL_VERSION = "2025-03-26"
+BROKEN_VENV_EXIT = 2
+
+
+def dedicated_venv_path() -> Path:
+    data_home = os.environ.get("XDG_DATA_HOME")
+    base = Path(data_home).expanduser() if data_home else HOME / ".local" / "share"
+    return base / "mempalace-librarian" / "venv"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Install and wire MemPalace for Codex/Claude."
-    )
-    parser.add_argument(
-        "--harness",
-        choices=["auto", "codex", "claude", "gemini", "both", "all"],
-        default="auto",
-        help="Which harnesses to configure.",
-    )
-    parser.add_argument(
-        "--venv",
-        default=str(DEFAULT_VENV),
-        help="Dedicated MemPalace virtualenv path.",
+        description="Install and wire MemPalace for Codex/Claude/Gemini.",
     )
     parser.add_argument(
         "--install-source",
         choices=["auto", "local", "pypi"],
-        default="auto",
-        help="Install from local repo if present, else PyPI.",
+        default="pypi",
+        help="Install source for dedicated runtime creation.",
     )
     parser.add_argument(
         "--repo",
@@ -88,14 +84,15 @@ def capture(cmd: Sequence[str]) -> subprocess.CompletedProcess:
 def require_python() -> str:
     for name in ("python3", "python"):
         path = shutil.which(name)
-        if path:
-            out = capture([path, "--version"])
-            version_text = (out.stdout or out.stderr).strip()
-            parts = version_text.split()
-            version = parts[-1] if parts else "0"
-            major, minor, *_ = [int(x) for x in version.split(".")]
-            if (major, minor) >= (3, 9):
-                return path
+        if not path:
+            continue
+        out = capture([path, "--version"])
+        version_text = (out.stdout or out.stderr).strip()
+        parts = version_text.split()
+        version = parts[-1] if parts else "0"
+        major, minor, *_ = [int(x) for x in version.split(".")]
+        if (major, minor) >= (3, 9):
+            return path
     raise SystemExit("Python 3.9+ required")
 
 
@@ -111,85 +108,36 @@ def select_install_source(mode: str, repo: Path) -> tuple[str, list[str]]:
     return "pypi", ["mempalace"]
 
 
-def has_mempalace(python_bin: Path) -> bool:
-    if not python_bin.exists():
-        return False
-    result = subprocess.run(
-        [str(python_bin), "-m", "mempalace", "status"],
-        text=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+def mcp_args(palace: str | None) -> list[str]:
+    args = ["-m", "mempalace.mcp_server"]
+    if palace:
+        args.extend(["--palace", palace])
+    return args
+
+
+def verify_cli(venv_python: Path, dry_run: bool) -> bool:
+    result = run(
+        [str(venv_python), "-m", "mempalace", "status"],
+        dry_run=dry_run,
+        check=False,
     )
-    return result.returncode == 0
+    return True if dry_run else result is not None and result.returncode == 0
 
 
-def configured_mcp_python_candidates(harnesses: Sequence[str]) -> list[Path]:
-    candidates: list[Path] = []
-    if "codex" in harnesses and tomllib is not None and CODEX_CONFIG.exists():
-        data = tomllib.loads(CODEX_CONFIG.read_text(encoding="utf-8"))
-        path = mcp_python_from_server(data.get("mcp_servers", {}).get("mempalace", {}))
-        if path is not None:
-            candidates.append(path)
-    if "gemini" in harnesses and GEMINI_SETTINGS.exists():
-        data = json.loads(GEMINI_SETTINGS.read_text(encoding="utf-8"))
-        path = mcp_python_from_server(data.get("mcpServers", {}).get("mempalace", {}))
-        if path is not None:
-            candidates.append(path)
-    return candidates
+def verify_imports(venv_python: Path, dry_run: bool) -> bool:
+    result = run(
+        [str(venv_python), "-c", "import mempalace, mempalace.mcp_server"],
+        dry_run=dry_run,
+        check=False,
+    )
+    return True if dry_run else result is not None and result.returncode == 0
 
 
-def mcp_python_from_server(server: dict) -> Path | None:
-    command = server.get("command")
-    args = server.get("args", [])
-    if not command or not isinstance(args, list):
-        return None
-    if args[:2] != ["-m", "mempalace.mcp_server"]:
-        return None
-    resolved = shutil.which(command) if "/" not in command else command
-    if not resolved:
-        return None
-    return Path(resolved).expanduser()
-
-
-def find_existing_mempalace_python(
-    preferred_venv: Path,
-    configured_candidates: Sequence[Path] = (),
-) -> Path | None:
-    preferred_python = preferred_venv / "bin" / "python"
-    if preferred_venv == DEFAULT_VENV:
-        candidates = [*configured_candidates, preferred_python, FALLBACK_EXISTING_VENV]
-    else:
-        candidates = [preferred_python, *configured_candidates, FALLBACK_EXISTING_VENV]
-    seen: set[Path] = set()
-    for candidate in candidates:
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        if has_mempalace(candidate):
-            return candidate
-    return None
-
-
-def ensure_venv(venv: Path, python_bin: str, dry_run: bool) -> Path:
-    if not (venv / "bin" / "python").exists():
-        run([python_bin, "-m", "venv", str(venv)], dry_run=dry_run)
-    return venv / "bin" / "python"
-
-
-def install_mempalace(venv_python: Path, install_args: list[str], dry_run: bool) -> None:
-    run([str(venv_python), "-m", "pip", "install", "--upgrade", "pip"], dry_run=dry_run)
-    run([str(venv_python), "-m", "pip", "install", *install_args], dry_run=dry_run)
-
-
-def verify_cli(venv_python: Path, dry_run: bool) -> None:
-    run([str(venv_python), "-m", "mempalace", "status"], dry_run=dry_run)
-
-
-def verify_mcp_server(venv_python: Path, palace: str | None, dry_run: bool) -> None:
+def verify_mcp_server(venv_python: Path, palace: str | None, dry_run: bool) -> bool:
     if dry_run:
         run([str(venv_python), "-c", "import mempalace.mcp_server"], dry_run=True)
-        log("$ " + "MCP initialize/tools/list handshake")
-        return
+        log("$ MCP initialize/tools/list handshake")
+        return True
 
     proc = subprocess.Popen(
         [str(venv_python), *mcp_args(palace)],
@@ -212,22 +160,21 @@ def verify_mcp_server(venv_python: Path, palace: str | None, dry_run: bool) -> N
         proc.stdin.flush()
         init_line = proc.stdout.readline().strip()
         if not init_line:
-            raise SystemExit("MCP server gave no initialize response")
+            return False
         init_resp = json.loads(init_line)
         name = init_resp.get("result", {}).get("serverInfo", {}).get("name")
         if name != "mempalace":
-            raise SystemExit("MCP initialize response invalid")
+            return False
 
         proc.stdin.write(json.dumps(tools_req) + "\n")
         proc.stdin.flush()
         tools_line = proc.stdout.readline().strip()
         if not tools_line:
-            raise SystemExit("MCP server gave no tools/list response")
+            return False
         tools_resp = json.loads(tools_line)
         tools = tools_resp.get("result", {}).get("tools", [])
         tool_names = {tool.get("name") for tool in tools}
-        if "mempalace_status" not in tool_names:
-            raise SystemExit("MCP tools/list missing mempalace_status")
+        return "mempalace_status" in tool_names
     finally:
         proc.terminate()
         try:
@@ -237,17 +184,79 @@ def verify_mcp_server(venv_python: Path, palace: str | None, dry_run: bool) -> N
             proc.communicate(timeout=5)
 
 
-def mcp_args(palace: str | None) -> list[str]:
-    args = ["-m", "mempalace.mcp_server"]
-    if palace:
-        args.extend(["--palace", palace])
-    return args
+def ensure_venv(venv: Path, python_bin: str, dry_run: bool) -> Path:
+    if not (venv / "bin" / "python").exists():
+        run([python_bin, "-m", "venv", str(venv)], dry_run=dry_run)
+    return venv / "bin" / "python"
 
 
-def manual_claude_mcp_command(venv_python: Path, palace: str | None) -> str:
-    return " ".join(
-        ["claude", "mcp", "add", "mempalace", "--", shlex.quote(str(venv_python)), *mcp_args(palace)]
-    )
+def install_mempalace(venv_python: Path, install_args: list[str], dry_run: bool) -> None:
+    run([str(venv_python), "-m", "pip", "install", "--upgrade", "pip"], dry_run=dry_run)
+    run([str(venv_python), "-m", "pip", "install", *install_args], dry_run=dry_run)
+
+
+def fail_broken_dedicated_venv(venv_python: Path, failures: list[str]) -> None:
+    log(f"Dedicated MemPalace runtime is broken: {venv_python}")
+    log("Checks failed: " + ", ".join(failures))
+    log("No config changes were applied.")
+    raise SystemExit(BROKEN_VENV_EXIT)
+
+
+def ensure_dedicated_runtime(
+    venv: Path,
+    python_bin: str,
+    install_args: list[str],
+    dry_run: bool,
+) -> Path:
+    venv_python = venv / "bin" / "python"
+    if not venv.exists():
+        log(f"Creating dedicated runtime: {venv}")
+        created_python = ensure_venv(venv, python_bin, dry_run)
+        install_mempalace(created_python, install_args, dry_run)
+        return created_python
+
+    if not venv_python.exists():
+        fail_broken_dedicated_venv(venv_python, ["missing python executable"])
+
+    failures: list[str] = []
+    if not verify_cli(venv_python, dry_run):
+        failures.append("mempalace status")
+    if not verify_imports(venv_python, dry_run):
+        failures.append("mempalace imports")
+    if failures:
+        fail_broken_dedicated_venv(venv_python, failures)
+
+    return venv_python
+
+
+def render_codex_mcp_config(existing: str, venv_python: Path, palace: str | None) -> str:
+    lines = existing.splitlines()
+    start = None
+    end = None
+    for idx, line in enumerate(lines):
+        if line.strip() == "[mcp_servers.mempalace]":
+            start = idx
+            end = len(lines)
+            for j in range(idx + 1, len(lines)):
+                if lines[j].startswith("[") and lines[j].endswith("]"):
+                    end = j
+                    break
+            break
+    block = [
+        "[mcp_servers.mempalace]",
+        f'command = "{str(venv_python)}"',
+        "args = [" + ", ".join(f'"{arg}"' for arg in mcp_args(palace)) + "]",
+    ]
+    if start is None:
+        return existing.rstrip() + ("\n\n" if existing.strip() else "") + "\n".join(block) + "\n"
+    new_lines = lines[:start] + block + lines[end:]
+    return "\n".join(new_lines).rstrip() + "\n"
+
+
+def load_json(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def hook_command(venv_python: Path, hook_name: str, harness: str) -> str:
@@ -274,69 +283,7 @@ def is_mempalace_hook_command(command: str, hook_name: str, harness: str) -> boo
     )
 
 
-def detect_harnesses(mode: str) -> list[str]:
-    if mode == "all":
-        return ["codex", "claude", "gemini"]
-    if mode == "both":
-        return ["codex", "claude"]
-    if mode in {"codex", "claude", "gemini"}:
-        return [mode]
-    found = []
-    if CODEX_CONFIG.exists() or (HOME / ".codex").exists():
-        found.append("codex")
-    if (HOME / ".claude").exists() or shutil.which("claude"):
-        found.append("claude")
-    if GEMINI_SETTINGS.exists() or (HOME / ".gemini").exists() or shutil.which("gemini"):
-        found.append("gemini")
-    return found or ["codex"]
-
-
-def upsert_codex_mcp(config_path: Path, venv_python: Path, palace: str | None, dry_run: bool) -> None:
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    existing = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
-    lines = existing.splitlines()
-    start = None
-    end = None
-    for idx, line in enumerate(lines):
-        if line.strip() == "[mcp_servers.mempalace]":
-            start = idx
-            end = len(lines)
-            for j in range(idx + 1, len(lines)):
-                if lines[j].startswith("[") and lines[j].endswith("]"):
-                    end = j
-                    break
-            break
-    block = [
-        "[mcp_servers.mempalace]",
-        f'command = "{str(venv_python)}"',
-        "args = [" + ", ".join(f'"{arg}"' for arg in mcp_args(palace)) + "]",
-    ]
-    if start is None:
-        new_text = existing.rstrip() + ("\n\n" if existing.strip() else "") + "\n".join(block) + "\n"
-    else:
-        new_lines = lines[:start] + block + lines[end:]
-        new_text = "\n".join(new_lines).rstrip() + "\n"
-    log(f"Update {config_path}")
-    if not dry_run:
-        config_path.write_text(new_text, encoding="utf-8")
-
-
-def load_json(path: Path) -> dict:
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def write_json(path: Path, data: dict, dry_run: bool) -> None:
-    log(f"Update {path}")
-    if dry_run:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-
-
-def ensure_codex_hooks(path: Path, venv_python: Path, dry_run: bool) -> None:
-    data = load_json(path)
+def codex_hooks_payload(data: dict, venv_python: Path) -> dict:
     stop_entry = {
         "type": "command",
         "command": hook_command(venv_python, "stop", "codex"),
@@ -347,61 +294,21 @@ def ensure_codex_hooks(path: Path, venv_python: Path, dry_run: bool) -> None:
         "command": hook_command(venv_python, "precompact", "codex"),
         "timeout": 30,
     }
-    stop_hooks = list(data.get("Stop", []))
-    pre_hooks = list(data.get("PreCompact", []))
     stop_hooks = [
         entry
-        for entry in stop_hooks
+        for entry in list(data.get("Stop", []))
         if not is_mempalace_hook_command(entry.get("command", ""), "stop", "codex")
     ]
     pre_hooks = [
         entry
-        for entry in pre_hooks
+        for entry in list(data.get("PreCompact", []))
         if not is_mempalace_hook_command(entry.get("command", ""), "precompact", "codex")
     ]
     stop_hooks.append(stop_entry)
     pre_hooks.append(pre_entry)
     data["Stop"] = stop_hooks
     data["PreCompact"] = pre_hooks
-    write_json(path, data, dry_run)
-
-
-def ensure_claude_hooks(path: Path, venv_python: Path, dry_run: bool) -> None:
-    data = load_json(path)
-    hooks = data.setdefault("hooks", {})
-    stop_list = hooks.setdefault("Stop", [])
-    pre_list = hooks.setdefault("PreCompact", [])
-    stop_cmd = hook_command(venv_python, "stop", "claude-code")
-    pre_cmd = hook_command(venv_python, "precompact", "claude-code")
-
-    stop_wrapper = {
-        "matcher": "*",
-        "hooks": [{"type": "command", "command": stop_cmd, "timeout": 30}],
-    }
-    pre_wrapper = {
-        "hooks": [{"type": "command", "command": pre_cmd, "timeout": 30}],
-    }
-
-    stop_list = [
-        entry for entry in stop_list if not _claude_has_mempalace_hook(entry, "stop", "claude-code")
-    ]
-    pre_list = [
-        entry
-        for entry in pre_list
-        if not _claude_has_mempalace_hook(entry, "precompact", "claude-code")
-    ]
-    stop_list.append(stop_wrapper)
-    pre_list.append(pre_wrapper)
-    hooks["Stop"] = stop_list
-    hooks["PreCompact"] = pre_list
-    write_json(path, data, dry_run)
-
-
-def _claude_has_command(entry: dict, command: str) -> bool:
-    for hook in entry.get("hooks", []):
-        if hook.get("command") == command:
-            return True
-    return False
+    return data
 
 
 def _claude_has_mempalace_hook(entry: dict, hook_name: str, harness: str) -> bool:
@@ -411,14 +318,52 @@ def _claude_has_mempalace_hook(entry: dict, hook_name: str, harness: str) -> boo
     return False
 
 
-def configure_claude_mcp(venv_python: Path, palace: str | None, dry_run: bool) -> None:
-    claude = shutil.which("claude")
-    if not claude:
-        raise SystemExit(
-            "Claude CLI not found. Cannot auto-configure Claude MCP. "
-            f"Manual command: {manual_claude_mcp_command(venv_python, palace)}"
-        )
-    run([claude, "mcp", "add", "mempalace", "--", str(venv_python), *mcp_args(palace)], dry_run=dry_run)
+def claude_settings_payload(data: dict, venv_python: Path, palace: str | None, include_hooks: bool) -> dict:
+    mcp_servers = data.setdefault("mcpServers", {})
+    mcp_servers["mempalace"] = {
+        "command": str(venv_python),
+        "args": mcp_args(palace),
+    }
+    if not include_hooks:
+        return data
+
+    hooks = data.setdefault("hooks", {})
+    stop_list = [
+        entry
+        for entry in list(hooks.get("Stop", []))
+        if not _claude_has_mempalace_hook(entry, "stop", "claude-code")
+    ]
+    pre_list = [
+        entry
+        for entry in list(hooks.get("PreCompact", []))
+        if not _claude_has_mempalace_hook(entry, "precompact", "claude-code")
+    ]
+    stop_list.append(
+        {
+            "matcher": "*",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": hook_command(venv_python, "stop", "claude-code"),
+                    "timeout": 30,
+                }
+            ],
+        }
+    )
+    pre_list.append(
+        {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": hook_command(venv_python, "precompact", "claude-code"),
+                    "timeout": 30,
+                }
+            ],
+        }
+    )
+    hooks["Stop"] = stop_list
+    hooks["PreCompact"] = pre_list
+    return data
 
 
 def resolve_gemini_precompress_command(venv_python: Path, repo: Path, dry_run: bool = False) -> str:
@@ -433,35 +378,6 @@ def resolve_gemini_precompress_command(venv_python: Path, repo: Path, dry_run: b
     raise SystemExit("Gemini hook script not found for MemPalace")
 
 
-def ensure_gemini_settings(
-    path: Path,
-    venv_python: Path,
-    palace: str | None,
-    repo: Path,
-    dry_run: bool,
-) -> None:
-    data = load_json(path)
-    mcp_servers = data.setdefault("mcpServers", {})
-    mcp_servers["mempalace"] = {
-        "command": str(venv_python),
-        "args": mcp_args(palace),
-    }
-
-    hooks = data.setdefault("hooks", {})
-    precompress_cmd = resolve_gemini_precompress_command(venv_python, repo, dry_run=dry_run)
-    precompress_wrapper = {
-        "matcher": "*",
-        "hooks": [{"type": "command", "command": precompress_cmd}],
-    }
-    existing = list(hooks.get("PreCompress", []))
-    existing = [
-        entry for entry in existing if not _gemini_has_mempalace_precompress(entry)
-    ]
-    existing.append(precompress_wrapper)
-    hooks["PreCompress"] = existing
-    write_json(path, data, dry_run)
-
-
 def _gemini_has_mempalace_precompress(entry: dict) -> bool:
     for hook in entry.get("hooks", []):
         command = hook.get("command", "")
@@ -470,18 +386,35 @@ def _gemini_has_mempalace_precompress(entry: dict) -> bool:
     return False
 
 
-def verify_gemini_settings(path: Path, venv_python: Path, palace: str | None) -> None:
-    if not path.exists():
-        raise SystemExit(f"Missing Gemini settings: {path}")
-    data = json.loads(path.read_text(encoding="utf-8"))
-    server = data.get("mcpServers", {}).get("mempalace", {})
-    if server.get("command") != str(venv_python):
-        raise SystemExit("Gemini MCP command mismatch after config write")
-    if server.get("args") != mcp_args(palace):
-        raise SystemExit("Gemini MCP args mismatch after config write")
-    hooks = data.get("hooks", {}).get("PreCompress", [])
-    if not any(_gemini_has_mempalace_precompress(entry) for entry in hooks):
-        raise SystemExit("Gemini PreCompress hook missing MemPalace entry")
+def gemini_settings_payload(
+    data: dict,
+    venv_python: Path,
+    palace: str | None,
+    repo: Path,
+    include_hooks: bool,
+    dry_run: bool,
+) -> dict:
+    mcp_servers = data.setdefault("mcpServers", {})
+    mcp_servers["mempalace"] = {
+        "command": str(venv_python),
+        "args": mcp_args(palace),
+    }
+    if not include_hooks:
+        return data
+
+    hooks = data.setdefault("hooks", {})
+    precompress_cmd = resolve_gemini_precompress_command(venv_python, repo, dry_run=dry_run)
+    existing = [
+        entry for entry in list(hooks.get("PreCompress", [])) if not _gemini_has_mempalace_precompress(entry)
+    ]
+    existing.append(
+        {
+            "matcher": "*",
+            "hooks": [{"type": "command", "command": precompress_cmd}],
+        }
+    )
+    hooks["PreCompress"] = existing
+    return data
 
 
 def verify_codex_mcp(config_path: Path, venv_python: Path, palace: str | None) -> None:
@@ -495,55 +428,109 @@ def verify_codex_mcp(config_path: Path, venv_python: Path, palace: str | None) -
         raise SystemExit("Codex MCP args mismatch after config write")
 
 
-def verify_hooks_json(path: Path, key: str) -> None:
-    if not path.exists():
-        raise SystemExit(f"Missing hook config: {path}")
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if key not in data:
-        raise SystemExit(f"Missing hook key {key} in {path}")
+def verify_claude_settings(path: Path, venv_python: Path, palace: str | None, include_hooks: bool) -> None:
+    data = load_json(path)
+    server = data.get("mcpServers", {}).get("mempalace", {})
+    if server.get("command") != str(venv_python):
+        raise SystemExit("Claude MCP command mismatch after config write")
+    if server.get("args") != mcp_args(palace):
+        raise SystemExit("Claude MCP args mismatch after config write")
+    if include_hooks:
+        hooks = data.get("hooks", {})
+        if "Stop" not in hooks or "PreCompact" not in hooks:
+            raise SystemExit("Claude hook entries missing after config write")
+
+
+def verify_gemini_settings(path: Path, venv_python: Path, palace: str | None, include_hooks: bool) -> None:
+    data = load_json(path)
+    server = data.get("mcpServers", {}).get("mempalace", {})
+    if server.get("command") != str(venv_python):
+        raise SystemExit("Gemini MCP command mismatch after config write")
+    if server.get("args") != mcp_args(palace):
+        raise SystemExit("Gemini MCP args mismatch after config write")
+    if include_hooks:
+        hooks = data.get("hooks", {}).get("PreCompress", [])
+        if not any(_gemini_has_mempalace_precompress(entry) for entry in hooks):
+            raise SystemExit("Gemini PreCompress hook missing MemPalace entry")
+
+
+def atomic_write_text(path: Path, text: str, dry_run: bool) -> None:
+    log(f"Update {path}")
+    if dry_run:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as tmp_file:
+        tmp_file.write(text)
+        tmp_name = tmp_file.name
+    Path(tmp_name).replace(path)
+
+
+def apply_updates(updates: list[tuple[Path, str]], dry_run: bool) -> None:
+    for path, text in updates:
+        atomic_write_text(path, text, dry_run=dry_run)
 
 
 def main() -> None:
     args = parse_args()
     python_bin = require_python()
-    venv = Path(args.venv).expanduser()
     repo = Path(args.repo).expanduser()
-    harnesses = detect_harnesses(args.harness)
     source_label, install_args = select_install_source(args.install_source, repo)
-    configured_candidates = configured_mcp_python_candidates(harnesses)
-    existing_python = find_existing_mempalace_python(venv, configured_candidates)
-    if existing_python is not None:
-        venv_python = existing_python
-        log(f"Reusing existing MemPalace install: {venv_python}")
-    else:
-        log(f"Install source: {source_label}")
-        venv_python = ensure_venv(venv, python_bin, args.dry_run)
-        install_mempalace(venv_python, install_args, args.dry_run)
+    venv = dedicated_venv_path()
+    venv_python = ensure_dedicated_runtime(
+        venv=venv,
+        python_bin=python_bin,
+        install_args=install_args,
+        dry_run=args.dry_run,
+    )
+    log(f"Dedicated runtime: {venv_python}")
+    if source_label == "pypi":
+        log("Install source: pypi")
+    elif source_label == "local":
+        log(f"Install source: local ({repo})")
 
-    verify_cli(venv_python, args.dry_run)
-    verify_mcp_server(venv_python, args.palace, args.dry_run)
+    if not verify_cli(venv_python, args.dry_run):
+        fail_broken_dedicated_venv(venv_python, ["mempalace status"])
+    if not verify_imports(venv_python, args.dry_run):
+        fail_broken_dedicated_venv(venv_python, ["mempalace imports"])
+    if not verify_mcp_server(venv_python, args.palace, args.dry_run):
+        fail_broken_dedicated_venv(venv_python, ["mcp handshake"])
 
-    if "codex" in harnesses:
-        upsert_codex_mcp(CODEX_CONFIG, venv_python, args.palace, args.dry_run)
-        if not args.dry_run:
-            verify_codex_mcp(CODEX_CONFIG, venv_python, args.palace)
-        if not args.skip_hooks:
-            ensure_codex_hooks(CODEX_HOOKS, venv_python, args.dry_run)
-            if not args.dry_run:
-                verify_hooks_json(CODEX_HOOKS, "Stop")
-                verify_hooks_json(CODEX_HOOKS, "PreCompact")
+    codex_existing = CODEX_CONFIG.read_text(encoding="utf-8") if CODEX_CONFIG.exists() else ""
+    codex_next = render_codex_mcp_config(codex_existing, venv_python, args.palace)
+    codex_hooks_data = codex_hooks_payload(load_json(CODEX_HOOKS), venv_python) if not args.skip_hooks else None
+    claude_data = claude_settings_payload(
+        load_json(CLAUDE_SETTINGS),
+        venv_python,
+        args.palace,
+        include_hooks=not args.skip_hooks,
+    )
+    gemini_data = gemini_settings_payload(
+        load_json(GEMINI_SETTINGS),
+        venv_python,
+        args.palace,
+        repo,
+        include_hooks=not args.skip_hooks,
+        dry_run=args.dry_run,
+    )
 
-    if "claude" in harnesses:
-        configure_claude_mcp(venv_python, args.palace, args.dry_run)
-        if not args.skip_hooks:
-            ensure_claude_hooks(CLAUDE_SETTINGS, venv_python, args.dry_run)
-            if not args.dry_run:
-                verify_hooks_json(CLAUDE_SETTINGS, "hooks")
+    updates: list[tuple[Path, str]] = [(CODEX_CONFIG, codex_next)]
+    if codex_hooks_data is not None:
+        updates.append((CODEX_HOOKS, json.dumps(codex_hooks_data, indent=2) + "\n"))
+    updates.append((CLAUDE_SETTINGS, json.dumps(claude_data, indent=2) + "\n"))
+    updates.append((GEMINI_SETTINGS, json.dumps(gemini_data, indent=2) + "\n"))
+    apply_updates(updates, dry_run=args.dry_run)
 
-    if "gemini" in harnesses:
-        ensure_gemini_settings(GEMINI_SETTINGS, venv_python, args.palace, repo, args.dry_run)
-        if not args.dry_run:
-            verify_gemini_settings(GEMINI_SETTINGS, venv_python, args.palace)
+    if not args.dry_run:
+        verify_codex_mcp(CODEX_CONFIG, venv_python, args.palace)
+        verify_claude_settings(CLAUDE_SETTINGS, venv_python, args.palace, include_hooks=not args.skip_hooks)
+        verify_gemini_settings(GEMINI_SETTINGS, venv_python, args.palace, include_hooks=not args.skip_hooks)
 
     log("MemPalace setup flow complete.")
 

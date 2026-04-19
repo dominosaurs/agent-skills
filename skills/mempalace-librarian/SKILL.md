@@ -30,9 +30,11 @@ Goal: maximize knowledge per token.
 
 ## Fast Path
 
-1. Identify the MCP interpreter from harness config before using any CLI.
-2. Confirm CLI and MCP both read the same palace through that interpreter.
-3. If either path fails, repair/install only the broken layer.
+1. Resolve dedicated runtime path:
+   - `$XDG_DATA_HOME/mempalace-librarian/venv` when `XDG_DATA_HOME` is set
+   - `~/.local/share/mempalace-librarian/venv` otherwise
+2. If missing, create and install MemPalace into that runtime.
+3. If present but broken, stop immediately without writing config/hook files.
 4. Resolve project root.
 5. Detect wing.
 6. Init/mine if new, unmined, or stale.
@@ -47,27 +49,22 @@ If memory matters and MemPalace missing or broken, make the same stack available
 - MCP server
 - hooks for supported harnesses
 
-Default install target when no healthy harness-configured interpreter exists:
-- `~/.mempalace/venv`
+Dedicated runtime path:
+- `$XDG_DATA_HOME/mempalace-librarian/venv` or `~/.local/share/mempalace-librarian/venv`
 
-Interpreter selection:
-1. use the active MCP server command from harness config if it imports and runs MemPalace
-2. use a user-specified venv if the user named one and it verifies
-3. use `~/.mempalace/venv` if healthy
-4. use `~/.venv` only as a common fallback if healthy
-5. create `~/.mempalace/venv` if no candidate verifies
+Runtime policy:
+1. always use the dedicated runtime path above
+2. create runtime only when path is missing
+3. if existing runtime is broken, fail fast and do not auto-repair
+4. rewire Codex, Claude, and Gemini MCP configs to this runtime on every setup run
+5. preserve all non-MemPalace settings in those config files
 
-Do not scan arbitrary venv directories. Users may have many unrelated venvs.
-An install is "found" only when that exact interpreter passes:
+A runtime is healthy only when it passes:
 - `<python> -m mempalace status`
 - `<python> -c "import mempalace, mempalace.mcp_server"`
+- MCP initialize + tools/list handshake includes `mempalace_status`
 
 Do not install into project venv by default.
-
-Never assume the CLI on `PATH` is the interpreter used by MCP.
-For Codex, read `~/.codex/config.toml` and use `[mcp_servers.mempalace].command`.
-For hooks, also check `~/.codex/hooks.json`, Claude settings, or Gemini settings.
-When a user says MemPalace is installed in a specific venv, prefer that venv if it passes verification.
 
 Supported harness automation:
 - Codex CLI
@@ -82,13 +79,13 @@ Use `--install-source local` only when the user explicitly wants the development
 
 Repair order:
 1. verify Python 3.9+
-2. identify harness MCP interpreter and palace path
-3. verify package path and Chroma version for that interpreter
-4. create/reuse the chosen venv only if needed
+2. resolve dedicated runtime path
+3. create runtime only if missing
+4. verify package path and Chroma version for that runtime
 5. install/upgrade public `mempalace` unless user explicitly wants local dev checkout
-6. verify CLI status with the same interpreter
+6. verify CLI status with the dedicated runtime interpreter
 7. verify `python -m mempalace.mcp_server`
-8. register MCP in harness if missing or wrong
+8. rewire Codex/Claude/Gemini MCP configs to dedicated runtime
 9. restart the MCP server or session if the running process loaded stale packages
 10. verify MCP responds with `mempalace_status`
 11. configure hooks

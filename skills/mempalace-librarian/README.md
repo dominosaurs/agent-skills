@@ -25,40 +25,36 @@ mempalace-librarian/
 
 1. Detect current project root and likely wing.
 2. Ensure MemPalace CLI + MCP are usable.
-3. Install or repair MemPalace in dedicated `~/.mempalace/venv` if needed.
-   Reuse existing healthy install first, including `~/.venv`, before creating new venv.
-4. Configure Codex CLI, Claude Code, or Gemini CLI MCP and hooks.
+3. Use dedicated runtime at `$XDG_DATA_HOME/mempalace-librarian/venv` or `~/.local/share/mempalace-librarian/venv`.
+4. Create runtime only when missing; if existing runtime is broken, stop immediately without config writes.
+5. Rewire Codex CLI, Claude Code, and Gemini CLI MCP to the dedicated runtime on every run.
+6. Configure hooks (unless `--skip-hooks`) for all harnesses.
 5. Run narrow bootstrap:
    - `mempalace_status`
    - `architecture`
    - `decisions`
    - one targeted search
    - one traversal
-6. Init/mine new or stale projects.
-7. File end-session diary, KG updates, and tunnel checks with duplicate gating.
+7. Init/mine new or stale projects.
+8. File end-session diary, KG updates, and tunnel checks with duplicate gating.
 
 ## Setup Helper
 
 Dry run:
 
 ```bash
-python3 scripts/setup_mempalace.py --dry-run --harness codex
-python3 scripts/setup_mempalace.py --dry-run --harness claude
-python3 scripts/setup_mempalace.py --dry-run --harness gemini
+python3 scripts/setup_mempalace.py --dry-run
 ```
 
 Real run:
 
 ```bash
-python3 scripts/setup_mempalace.py --harness codex
-python3 scripts/setup_mempalace.py --harness both
-python3 scripts/setup_mempalace.py --harness gemini
+python3 scripts/setup_mempalace.py
 ```
 
 Options:
-- `--install-source auto|local|pypi`
+- `--install-source auto|local|pypi` (default: `pypi`)
 - `--repo ~/codes/mempalace`
-- `--venv ~/.mempalace/venv`
 - `--palace /custom/palace/path`
 - `--skip-hooks`
 

@@ -16,479 +16,196 @@ SPEC.loader.exec_module(setup_mempalace)
 
 
 class SetupMempalaceTests(unittest.TestCase):
-    def test_upsert_codex_mcp_preserves_other_sections(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            config = Path(tmp) / "config.toml"
-            config.write_text(
-                'model = "gpt-5.4"\n\n[mcp_servers.other]\ncommand = "/bin/true"\n',
-                encoding="utf-8",
-            )
-
-            setup_mempalace.upsert_codex_mcp(
-                config,
-                Path("/tmp/venv/bin/python"),
-                None,
-                dry_run=False,
-            )
-
-            text = config.read_text(encoding="utf-8")
-            self.assertIn('[mcp_servers.other]', text)
-            self.assertIn('[mcp_servers.mempalace]', text)
-            self.assertIn('command = "/tmp/venv/bin/python"', text)
-            self.assertIn('args = ["-m", "mempalace.mcp_server"]', text)
-
-    def test_ensure_codex_hooks_dedupes_and_preserves_existing(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            hooks = Path(tmp) / "hooks.json"
-            existing_command = setup_mempalace.hook_command(
-                Path("/tmp/venv/bin/python"), "stop", "codex"
-            )
-            hooks.write_text(
-                json.dumps(
-                    {
-                        "Stop": [
-                            {"type": "command", "command": existing_command, "timeout": 30},
-                            {"type": "command", "command": "/bin/other", "timeout": 10},
-                        ],
-                        "PreCompact": [],
-                    }
-                ),
-                encoding="utf-8",
-            )
-
-            setup_mempalace.ensure_codex_hooks(
-                hooks, Path("/tmp/venv/bin/python"), dry_run=False
-            )
-
-            data = json.loads(hooks.read_text(encoding="utf-8"))
-            stop_cmds = [entry["command"] for entry in data["Stop"]]
-            self.assertEqual(stop_cmds.count(existing_command), 1)
-            self.assertIn("/bin/other", stop_cmds)
-            pre_cmds = [entry["command"] for entry in data["PreCompact"]]
+    def test_dedicated_venv_path_uses_xdg_when_set(self) -> None:
+        with mock.patch.dict(setup_mempalace.os.environ, {"XDG_DATA_HOME": "/tmp/xdg"}):
             self.assertEqual(
-                pre_cmds,
-                [setup_mempalace.hook_command(Path("/tmp/venv/bin/python"), "precompact", "codex")],
+                setup_mempalace.dedicated_venv_path(),
+                Path("/tmp/xdg/mempalace-librarian/venv"),
             )
 
-    def test_ensure_codex_hooks_replaces_old_mempalace_python_path(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            hooks = Path(tmp) / "hooks.json"
-            hooks.write_text(
-                json.dumps(
-                    {
-                        "Stop": [
-                            {
-                                "type": "command",
-                                "command": "/old/python -m mempalace hook run --hook stop --harness codex",
-                                "timeout": 30,
-                            }
-                        ],
-                        "PreCompact": [
-                            {
-                                "type": "command",
-                                "command": "/old/python -m mempalace hook run --hook precompact --harness codex",
-                                "timeout": 30,
-                            }
-                        ],
-                    }
-                ),
-                encoding="utf-8",
-            )
-
-            setup_mempalace.ensure_codex_hooks(
-                hooks, Path("/new/python"), dry_run=False
-            )
-
-            data = json.loads(hooks.read_text(encoding="utf-8"))
-            self.assertEqual(len(data["Stop"]), 1)
-            self.assertEqual(
-                data["Stop"][0]["command"],
-                "/new/python -m mempalace hook run --hook stop --harness codex",
-            )
-            self.assertEqual(len(data["PreCompact"]), 1)
-            self.assertEqual(
-                data["PreCompact"][0]["command"],
-                "/new/python -m mempalace hook run --hook precompact --harness codex",
-            )
-
-    def test_ensure_claude_hooks_preserves_existing(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            settings = Path(tmp) / "settings.local.json"
-            settings.write_text(
-                json.dumps(
-                    {
-                        "hooks": {
-                            "Stop": [
-                                {
-                                    "matcher": "*",
-                                    "hooks": [
-                                        {"type": "command", "command": "/bin/other", "timeout": 15}
-                                    ],
-                                }
-                            ]
-                        }
-                    }
-                ),
-                encoding="utf-8",
-            )
-
-            setup_mempalace.ensure_claude_hooks(
-                settings, Path("/tmp/venv/bin/python"), dry_run=False
-            )
-
-            data = json.loads(settings.read_text(encoding="utf-8"))
-            stop_commands = [
-                hook["command"]
-                for entry in data["hooks"]["Stop"]
-                for hook in entry.get("hooks", [])
-            ]
-            self.assertIn("/bin/other", stop_commands)
-            self.assertIn(
-                setup_mempalace.hook_command(
-                    Path("/tmp/venv/bin/python"), "stop", "claude-code"
-                ),
-                stop_commands,
-            )
-            pre_commands = [
-                hook["command"]
-                for entry in data["hooks"]["PreCompact"]
-                for hook in entry.get("hooks", [])
-            ]
-            self.assertIn(
-                setup_mempalace.hook_command(
-                    Path("/tmp/venv/bin/python"), "precompact", "claude-code"
-                ),
-                pre_commands,
-            )
-
-    def test_ensure_claude_hooks_replaces_old_mempalace_python_path(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            settings = Path(tmp) / "settings.local.json"
-            settings.write_text(
-                json.dumps(
-                    {
-                        "hooks": {
-                            "Stop": [
-                                {
-                                    "matcher": "*",
-                                    "hooks": [
-                                        {
-                                            "type": "command",
-                                            "command": "/old/python -m mempalace hook run --hook stop --harness claude-code",
-                                            "timeout": 30,
-                                        }
-                                    ],
-                                }
-                            ],
-                            "PreCompact": [
-                                {
-                                    "hooks": [
-                                        {
-                                            "type": "command",
-                                            "command": "/old/python -m mempalace hook run --hook precompact --harness claude-code",
-                                            "timeout": 30,
-                                        }
-                                    ],
-                                }
-                            ],
-                        }
-                    }
-                ),
-                encoding="utf-8",
-            )
-
-            setup_mempalace.ensure_claude_hooks(
-                settings, Path("/new/python"), dry_run=False
-            )
-
-            data = json.loads(settings.read_text(encoding="utf-8"))
-            stop_commands = [
-                hook["command"]
-                for entry in data["hooks"]["Stop"]
-                for hook in entry.get("hooks", [])
-            ]
-            self.assertEqual(
-                stop_commands,
-                ["/new/python -m mempalace hook run --hook stop --harness claude-code"],
-            )
-            pre_commands = [
-                hook["command"]
-                for entry in data["hooks"]["PreCompact"]
-                for hook in entry.get("hooks", [])
-            ]
-            self.assertEqual(
-                pre_commands,
-                ["/new/python -m mempalace hook run --hook precompact --harness claude-code"],
-            )
-
-    def test_ensure_gemini_settings_preserves_existing_and_writes_mcp(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            settings = tmp_path / "settings.json"
-            settings.write_text(
-                json.dumps(
-                    {
-                        "ui": {"theme": "dark"},
-                        "hooks": {
-                            "PreCompress": [
-                                {
-                                    "matcher": "*",
-                                    "hooks": [{"type": "command", "command": "/bin/other-hook"}],
-                                }
-                            ]
-                        },
-                    }
-                ),
-                encoding="utf-8",
-            )
-            repo = tmp_path / "repo"
-            hook_dir = repo / "hooks"
-            hook_dir.mkdir(parents=True)
-            (hook_dir / "mempal_precompact_hook.sh").write_text("#!/bin/bash\n", encoding="utf-8")
-
-            setup_mempalace.ensure_gemini_settings(
-                settings,
-                Path("/tmp/venv/bin/python"),
-                None,
-                repo,
-                dry_run=False,
-            )
-
-            data = json.loads(settings.read_text(encoding="utf-8"))
-            self.assertEqual(data["ui"]["theme"], "dark")
-            self.assertEqual(
-                data["mcpServers"]["mempalace"]["command"],
-                "/tmp/venv/bin/python",
-            )
-            self.assertEqual(
-                data["mcpServers"]["mempalace"]["args"],
-                ["-m", "mempalace.mcp_server"],
-            )
-            commands = [
-                hook["command"]
-                for entry in data["hooks"]["PreCompress"]
-                for hook in entry.get("hooks", [])
-            ]
-            self.assertIn("/bin/other-hook", commands)
-            self.assertIn(str(hook_dir / "mempal_precompact_hook.sh"), commands)
-
-    def test_ensure_gemini_settings_replaces_old_mempalace_hook(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            settings = tmp_path / "settings.json"
-            settings.write_text(
-                json.dumps(
-                    {
-                        "hooks": {
-                            "PreCompress": [
-                                {
-                                    "matcher": "*",
-                                    "hooks": [
-                                        {
-                                            "type": "command",
-                                            "command": "/old/mempalace/hooks/mempal_precompact_hook.sh",
-                                        }
-                                    ],
-                                }
-                            ]
-                        }
-                    }
-                ),
-                encoding="utf-8",
-            )
-            repo = tmp_path / "repo"
-            hook_dir = repo / "hooks"
-            hook_dir.mkdir(parents=True)
-            new_hook = hook_dir / "mempal_precompact_hook.sh"
-            new_hook.write_text("#!/bin/bash\n", encoding="utf-8")
-
-            setup_mempalace.ensure_gemini_settings(
-                settings,
-                Path("/tmp/venv/bin/python"),
-                None,
-                repo,
-                dry_run=False,
-            )
-
-            data = json.loads(settings.read_text(encoding="utf-8"))
-            commands = [
-                hook["command"]
-                for entry in data["hooks"]["PreCompress"]
-                for hook in entry.get("hooks", [])
-            ]
-            self.assertEqual(commands, [str(new_hook)])
-
-    def test_resolve_gemini_precompress_command_allows_dry_run_without_files(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            command = setup_mempalace.resolve_gemini_precompress_command(
-                tmp_path / ".venv" / "bin" / "python",
-                tmp_path / "missing-repo",
-                dry_run=True,
-            )
-        self.assertTrue(command.endswith("/mempalace/hooks/mempal_precompact_hook.sh"))
-
-    def test_verify_mcp_server_requires_status_tool(self) -> None:
-        proc = mock.Mock()
-        proc.stdin = mock.Mock()
-        proc.stdout = mock.Mock()
-        proc.stdout.readline.side_effect = [
-            json.dumps(
-                {"jsonrpc": "2.0", "id": 1, "result": {"serverInfo": {"name": "mempalace"}}}
-            )
-            + "\n",
-            json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"tools": []}}) + "\n",
-        ]
-        proc.communicate.return_value = ("", "")
-
-        with mock.patch.object(setup_mempalace.subprocess, "Popen", return_value=proc):
-            with self.assertRaises(SystemExit):
-                setup_mempalace.verify_mcp_server(
-                    Path("/tmp/venv/bin/python"), None, dry_run=False
+    def test_dedicated_venv_path_falls_back_to_local_share(self) -> None:
+        with mock.patch.dict(setup_mempalace.os.environ, {}, clear=True):
+            with mock.patch.object(setup_mempalace, "HOME", Path("/tmp/home")):
+                self.assertEqual(
+                    setup_mempalace.dedicated_venv_path(),
+                    Path("/tmp/home/.local/share/mempalace-librarian/venv"),
                 )
 
-    def test_configure_claude_mcp_requires_cli(self) -> None:
-        with mock.patch.object(setup_mempalace.shutil, "which", return_value=None):
-            with self.assertRaises(SystemExit):
-                setup_mempalace.configure_claude_mcp(
-                    Path("/tmp/venv/bin/python"), None, dry_run=False
-                )
-
-    def test_find_existing_mempalace_python_prefers_working_install(self) -> None:
-        preferred = Path("/tmp/preferred")
-        with mock.patch.object(
-            setup_mempalace,
-            "FALLBACK_EXISTING_VENV",
-            Path("/tmp/fallback/bin/python"),
-        ):
+    def test_ensure_dedicated_runtime_creates_when_missing(self) -> None:
+        venv = Path("/tmp/new-venv")
+        with mock.patch.object(Path, "exists", return_value=False):
             with mock.patch.object(
-                setup_mempalace,
-                "has_mempalace",
-                side_effect=lambda path: path == Path("/tmp/fallback/bin/python"),
-            ):
-                found = setup_mempalace.find_existing_mempalace_python(preferred)
-        self.assertEqual(found, Path("/tmp/fallback/bin/python"))
-
-    def test_find_existing_mempalace_python_prefers_configured_for_default_venv(self) -> None:
-        configured = Path("/tmp/configured/bin/python")
-        with mock.patch.object(setup_mempalace, "DEFAULT_VENV", Path("/tmp/default")):
-            with mock.patch.object(
-                setup_mempalace,
-                "FALLBACK_EXISTING_VENV",
-                Path("/tmp/fallback/bin/python"),
-            ):
-                with mock.patch.object(
-                    setup_mempalace,
-                    "has_mempalace",
-                    side_effect=lambda path: path == configured,
-                ):
-                    found = setup_mempalace.find_existing_mempalace_python(
-                        Path("/tmp/default"), [configured]
+                setup_mempalace, "ensure_venv", return_value=venv / "bin" / "python"
+            ) as ensure_venv:
+                with mock.patch.object(setup_mempalace, "install_mempalace") as install:
+                    out = setup_mempalace.ensure_dedicated_runtime(
+                        venv=venv,
+                        python_bin="/usr/bin/python3",
+                        install_args=["mempalace"],
+                        dry_run=False,
                     )
-        self.assertEqual(found, configured)
+        self.assertEqual(out, venv / "bin" / "python")
+        ensure_venv.assert_called_once()
+        install.assert_called_once()
 
-    def test_find_existing_mempalace_python_prefers_explicit_venv(self) -> None:
-        explicit = Path("/tmp/explicit")
-        configured = Path("/tmp/configured/bin/python")
-        with mock.patch.object(
-            setup_mempalace,
-            "has_mempalace",
-            side_effect=lambda path: path == explicit / "bin" / "python",
-        ):
-            found = setup_mempalace.find_existing_mempalace_python(explicit, [configured])
-        self.assertEqual(found, explicit / "bin" / "python")
-
-    def test_configured_mcp_python_candidates_reads_codex_config(self) -> None:
+    def test_ensure_dedicated_runtime_fails_when_existing_python_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            config = Path(tmp) / "config.toml"
-            config.write_text(
-                '[mcp_servers.mempalace]\n'
-                f'command = "{tmp}/venv/bin/python"\n'
-                'args = ["-m", "mempalace.mcp_server"]\n',
-                encoding="utf-8",
-            )
-            with mock.patch.object(setup_mempalace, "CODEX_CONFIG", config):
-                candidates = setup_mempalace.configured_mcp_python_candidates(["codex"])
-        self.assertEqual(candidates, [Path(tmp) / "venv" / "bin" / "python"])
+            venv = Path(tmp) / "venv"
+            venv.mkdir(parents=True)
+            with self.assertRaises(SystemExit) as ctx:
+                setup_mempalace.ensure_dedicated_runtime(
+                    venv=venv,
+                    python_bin="/usr/bin/python3",
+                    install_args=["mempalace"],
+                    dry_run=False,
+                )
+        self.assertEqual(ctx.exception.code, setup_mempalace.BROKEN_VENV_EXIT)
 
-    def test_main_smoke_codex_with_temp_home_paths(self) -> None:
+    def test_ensure_dedicated_runtime_fails_when_existing_runtime_checks_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            venv = Path(tmp) / "venv"
+            bin_dir = venv / "bin"
+            bin_dir.mkdir(parents=True)
+            (bin_dir / "python").write_text("", encoding="utf-8")
+            with mock.patch.object(setup_mempalace, "verify_cli", return_value=False):
+                with mock.patch.object(setup_mempalace, "verify_imports", return_value=True):
+                    with self.assertRaises(SystemExit) as ctx:
+                        setup_mempalace.ensure_dedicated_runtime(
+                            venv=venv,
+                            python_bin="/usr/bin/python3",
+                            install_args=["mempalace"],
+                            dry_run=False,
+                        )
+        self.assertEqual(ctx.exception.code, setup_mempalace.BROKEN_VENV_EXIT)
+
+    def test_render_codex_mcp_config_preserves_other_sections(self) -> None:
+        existing = 'model = "gpt-5.4"\n\n[mcp_servers.other]\ncommand = "/bin/true"\n'
+        rendered = setup_mempalace.render_codex_mcp_config(
+            existing,
+            Path("/tmp/venv/bin/python"),
+            None,
+        )
+        self.assertIn('[mcp_servers.other]', rendered)
+        self.assertIn('[mcp_servers.mempalace]', rendered)
+        self.assertIn('command = "/tmp/venv/bin/python"', rendered)
+
+    def test_claude_settings_payload_writes_mcp_without_hooks_when_skipped(self) -> None:
+        data = {"user": {"theme": "dark"}}
+        out = setup_mempalace.claude_settings_payload(
+            data,
+            Path("/tmp/venv/bin/python"),
+            None,
+            include_hooks=False,
+        )
+        self.assertEqual(out["user"]["theme"], "dark")
+        self.assertEqual(out["mcpServers"]["mempalace"]["command"], "/tmp/venv/bin/python")
+        self.assertNotIn("hooks", out)
+
+    def test_gemini_settings_payload_replaces_old_mempalace_hook(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            codex_dir = tmp_path / ".codex"
-            codex_dir.mkdir()
-            config_path = codex_dir / "config.toml"
-            config_path.write_text('model = "gpt-5.4"\n', encoding="utf-8")
-
-            args = mock.Mock(
-                harness="codex",
-                venv=str(tmp_path / ".mempalace" / "venv"),
-                install_source="pypi",
-                repo=str(tmp_path / "missing-repo"),
-                palace=None,
-                skip_hooks=False,
+            repo = tmp_path / "repo"
+            hook_dir = repo / "hooks"
+            hook_dir.mkdir(parents=True)
+            hook = hook_dir / "mempal_precompact_hook.sh"
+            hook.write_text("#!/bin/bash\n", encoding="utf-8")
+            data = {
+                "hooks": {
+                    "PreCompress": [
+                        {
+                            "matcher": "*",
+                            "hooks": [{"type": "command", "command": "/old/mempal_precompact_hook.sh"}],
+                        }
+                    ]
+                }
+            }
+            out = setup_mempalace.gemini_settings_payload(
+                data,
+                Path("/tmp/venv/bin/python"),
+                None,
+                repo,
+                include_hooks=True,
                 dry_run=False,
             )
+        commands = [
+            hook_item["command"]
+            for entry in out["hooks"]["PreCompress"]
+            for hook_item in entry.get("hooks", [])
+        ]
+        self.assertEqual(commands, [str(hook)])
 
-            with mock.patch.object(setup_mempalace, "parse_args", return_value=args):
-                with mock.patch.object(setup_mempalace, "require_python", return_value="/usr/bin/python3"):
-                    with mock.patch.object(
-                        setup_mempalace, "find_existing_mempalace_python", return_value=None
-                    ):
-                        with mock.patch.object(
-                            setup_mempalace,
-                            "ensure_venv",
-                            return_value=tmp_path / ".mempalace" / "venv" / "bin" / "python",
-                        ):
-                            with mock.patch.object(setup_mempalace, "install_mempalace"):
-                                with mock.patch.object(setup_mempalace, "verify_cli"):
-                                    with mock.patch.object(setup_mempalace, "verify_mcp_server"):
-                                        with mock.patch.object(setup_mempalace, "CODEX_CONFIG", config_path):
-                                            with mock.patch.object(
-                                                setup_mempalace, "CODEX_HOOKS", codex_dir / "hooks.json"
-                                            ):
-                                                setup_mempalace.main()
-
-            config_text = config_path.read_text(encoding="utf-8")
-            self.assertIn("[mcp_servers.mempalace]", config_text)
-            hooks_data = json.loads((codex_dir / "hooks.json").read_text(encoding="utf-8"))
-            self.assertIn("Stop", hooks_data)
-            self.assertIn("PreCompact", hooks_data)
-
-    def test_main_smoke_gemini_with_temp_settings(self) -> None:
+    def test_main_writes_all_three_harnesses(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            settings_path = tmp_path / "settings.json"
-            settings_path.write_text("{}", encoding="utf-8")
             repo = tmp_path / "repo"
             hook_dir = repo / "hooks"
             hook_dir.mkdir(parents=True)
             (hook_dir / "mempal_precompact_hook.sh").write_text("#!/bin/bash\n", encoding="utf-8")
 
             args = mock.Mock(
-                harness="gemini",
-                venv=str(tmp_path / ".venv"),
                 install_source="pypi",
                 repo=str(repo),
                 palace=None,
                 skip_hooks=False,
                 dry_run=False,
             )
+            venv_python = tmp_path / "venv" / "bin" / "python"
+            codex_config = tmp_path / "config.toml"
+            codex_hooks = tmp_path / "hooks.json"
+            claude_settings = tmp_path / "settings.local.json"
+            gemini_settings = tmp_path / "settings.json"
+
+            with mock.patch.object(setup_mempalace, "parse_args", return_value=args):
+                with mock.patch.object(setup_mempalace, "require_python", return_value="/usr/bin/python3"):
+                    with mock.patch.object(setup_mempalace, "dedicated_venv_path", return_value=tmp_path / "venv"):
+                        with mock.patch.object(
+                            setup_mempalace,
+                            "ensure_dedicated_runtime",
+                            return_value=venv_python,
+                        ):
+                            with mock.patch.object(setup_mempalace, "verify_cli", return_value=True):
+                                with mock.patch.object(setup_mempalace, "verify_imports", return_value=True):
+                                    with mock.patch.object(setup_mempalace, "verify_mcp_server", return_value=True):
+                                        with mock.patch.object(setup_mempalace, "CODEX_CONFIG", codex_config):
+                                            with mock.patch.object(setup_mempalace, "CODEX_HOOKS", codex_hooks):
+                                                with mock.patch.object(
+                                                    setup_mempalace, "CLAUDE_SETTINGS", claude_settings
+                                                ):
+                                                    with mock.patch.object(
+                                                        setup_mempalace, "GEMINI_SETTINGS", gemini_settings
+                                                    ):
+                                                        setup_mempalace.main()
+
+            self.assertIn("[mcp_servers.mempalace]", codex_config.read_text(encoding="utf-8"))
+            self.assertIn("Stop", json.loads(codex_hooks.read_text(encoding="utf-8")))
+            self.assertIn("mcpServers", json.loads(claude_settings.read_text(encoding="utf-8")))
+            self.assertIn("mcpServers", json.loads(gemini_settings.read_text(encoding="utf-8")))
+
+    def test_main_stops_on_broken_runtime_before_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            args = mock.Mock(
+                install_source="pypi",
+                repo=str(tmp_path / "repo"),
+                palace=None,
+                skip_hooks=False,
+                dry_run=False,
+            )
+            codex_config = tmp_path / "config.toml"
+            codex_config.write_text('model = "gpt-5.4"\n', encoding="utf-8")
 
             with mock.patch.object(setup_mempalace, "parse_args", return_value=args):
                 with mock.patch.object(setup_mempalace, "require_python", return_value="/usr/bin/python3"):
                     with mock.patch.object(
                         setup_mempalace,
-                        "find_existing_mempalace_python",
-                        return_value=tmp_path / ".venv" / "bin" / "python",
+                        "ensure_dedicated_runtime",
+                        side_effect=SystemExit(setup_mempalace.BROKEN_VENV_EXIT),
                     ):
-                        with mock.patch.object(setup_mempalace, "verify_cli"):
-                            with mock.patch.object(setup_mempalace, "verify_mcp_server"):
-                                with mock.patch.object(setup_mempalace, "GEMINI_SETTINGS", settings_path):
-                                    setup_mempalace.main()
-
-            data = json.loads(settings_path.read_text(encoding="utf-8"))
-            self.assertIn("mempalace", data["mcpServers"])
-            self.assertIn("PreCompress", data["hooks"])
+                        with mock.patch.object(setup_mempalace, "CODEX_CONFIG", codex_config):
+                            with self.assertRaises(SystemExit) as ctx:
+                                setup_mempalace.main()
+            self.assertEqual(ctx.exception.code, setup_mempalace.BROKEN_VENV_EXIT)
+            self.assertEqual(codex_config.read_text(encoding="utf-8"), 'model = "gpt-5.4"\n')
 
 
 if __name__ == "__main__":
