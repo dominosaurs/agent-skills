@@ -369,6 +369,48 @@ class SetupMempalaceTests(unittest.TestCase):
                 found = setup_mempalace.find_existing_mempalace_python(preferred)
         self.assertEqual(found, Path("/tmp/fallback/bin/python"))
 
+    def test_find_existing_mempalace_python_prefers_configured_for_default_venv(self) -> None:
+        configured = Path("/tmp/configured/bin/python")
+        with mock.patch.object(setup_mempalace, "DEFAULT_VENV", Path("/tmp/default")):
+            with mock.patch.object(
+                setup_mempalace,
+                "FALLBACK_EXISTING_VENV",
+                Path("/tmp/fallback/bin/python"),
+            ):
+                with mock.patch.object(
+                    setup_mempalace,
+                    "has_mempalace",
+                    side_effect=lambda path: path == configured,
+                ):
+                    found = setup_mempalace.find_existing_mempalace_python(
+                        Path("/tmp/default"), [configured]
+                    )
+        self.assertEqual(found, configured)
+
+    def test_find_existing_mempalace_python_prefers_explicit_venv(self) -> None:
+        explicit = Path("/tmp/explicit")
+        configured = Path("/tmp/configured/bin/python")
+        with mock.patch.object(
+            setup_mempalace,
+            "has_mempalace",
+            side_effect=lambda path: path == explicit / "bin" / "python",
+        ):
+            found = setup_mempalace.find_existing_mempalace_python(explicit, [configured])
+        self.assertEqual(found, explicit / "bin" / "python")
+
+    def test_configured_mcp_python_candidates_reads_codex_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.toml"
+            config.write_text(
+                '[mcp_servers.mempalace]\n'
+                f'command = "{tmp}/venv/bin/python"\n'
+                'args = ["-m", "mempalace.mcp_server"]\n',
+                encoding="utf-8",
+            )
+            with mock.patch.object(setup_mempalace, "CODEX_CONFIG", config):
+                candidates = setup_mempalace.configured_mcp_python_candidates(["codex"])
+        self.assertEqual(candidates, [Path(tmp) / "venv" / "bin" / "python"])
+
     def test_main_smoke_codex_with_temp_home_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

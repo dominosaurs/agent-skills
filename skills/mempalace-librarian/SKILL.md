@@ -47,12 +47,20 @@ If memory matters and MemPalace missing or broken, make the same stack available
 - MCP server
 - hooks for supported harnesses
 
-Default install target when no healthy harness-configured venv exists:
+Default install target when no healthy harness-configured interpreter exists:
 - `~/.mempalace/venv`
 
-Reuse existing healthy install first:
-- requested venv
-- `~/.venv`
+Interpreter selection:
+1. use the active MCP server command from harness config if it imports and runs MemPalace
+2. use a user-specified venv if the user named one and it verifies
+3. use `~/.mempalace/venv` if healthy
+4. use `~/.venv` only as a common fallback if healthy
+5. create `~/.mempalace/venv` if no candidate verifies
+
+Do not scan arbitrary venv directories. Users may have many unrelated venvs.
+An install is "found" only when that exact interpreter passes:
+- `<python> -m mempalace status`
+- `<python> -c "import mempalace, mempalace.mcp_server"`
 
 Do not install into project venv by default.
 

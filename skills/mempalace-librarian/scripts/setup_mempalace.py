@@ -123,11 +123,43 @@ def has_mempalace(python_bin: Path) -> bool:
     return result.returncode == 0
 
 
-def find_existing_mempalace_python(preferred_venv: Path) -> Path | None:
-    candidates = [
-        preferred_venv / "bin" / "python",
-        FALLBACK_EXISTING_VENV,
-    ]
+def configured_mcp_python_candidates(harnesses: Sequence[str]) -> list[Path]:
+    candidates: list[Path] = []
+    if "codex" in harnesses and tomllib is not None and CODEX_CONFIG.exists():
+        data = tomllib.loads(CODEX_CONFIG.read_text(encoding="utf-8"))
+        path = mcp_python_from_server(data.get("mcp_servers", {}).get("mempalace", {}))
+        if path is not None:
+            candidates.append(path)
+    if "gemini" in harnesses and GEMINI_SETTINGS.exists():
+        data = json.loads(GEMINI_SETTINGS.read_text(encoding="utf-8"))
+        path = mcp_python_from_server(data.get("mcpServers", {}).get("mempalace", {}))
+        if path is not None:
+            candidates.append(path)
+    return candidates
+
+
+def mcp_python_from_server(server: dict) -> Path | None:
+    command = server.get("command")
+    args = server.get("args", [])
+    if not command or not isinstance(args, list):
+        return None
+    if args[:2] != ["-m", "mempalace.mcp_server"]:
+        return None
+    resolved = shutil.which(command) if "/" not in command else command
+    if not resolved:
+        return None
+    return Path(resolved).expanduser()
+
+
+def find_existing_mempalace_python(
+    preferred_venv: Path,
+    configured_candidates: Sequence[Path] = (),
+) -> Path | None:
+    preferred_python = preferred_venv / "bin" / "python"
+    if preferred_venv == DEFAULT_VENV:
+        candidates = [*configured_candidates, preferred_python, FALLBACK_EXISTING_VENV]
+    else:
+        candidates = [preferred_python, *configured_candidates, FALLBACK_EXISTING_VENV]
     seen: set[Path] = set()
     for candidate in candidates:
         if candidate in seen:
@@ -478,7 +510,8 @@ def main() -> None:
     repo = Path(args.repo).expanduser()
     harnesses = detect_harnesses(args.harness)
     source_label, install_args = select_install_source(args.install_source, repo)
-    existing_python = find_existing_mempalace_python(venv)
+    configured_candidates = configured_mcp_python_candidates(harnesses)
+    existing_python = find_existing_mempalace_python(venv, configured_candidates)
     if existing_python is not None:
         venv_python = existing_python
         log(f"Reusing existing MemPalace install: {venv_python}")
