@@ -18,4 +18,4 @@ agent-skills/
 
 ## Skills
 
-- `mempalace-librarian` — MemPalace-first librarian skill for install, MCP setup, token-cheap bootstrap, mining, filing, and tunnel hygiene across Codex, Claude, and Gemini CLI.
+- `mempalace-librarian` — MemPalace knowledge-access and quality skill focused on MCP retrieval, mining validation, filing, and tunnel hygiene.

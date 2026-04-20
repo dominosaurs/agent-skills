@@ -3,8 +3,7 @@
 Skill for AI coding agents that want MemPalace useful fast, not noisy.
 
 Purpose:
-- make MemPalace available in OS when memory matters
-- make MCP work before normal MemPalace flow
+- enforce MemPalace MCP accessibility before memory work
 - bootstrap project context with low token cost
 - mine new or stale projects automatically
 - file durable AAAK memory, KG facts, and cross-project tunnels
@@ -14,59 +13,35 @@ Purpose:
 ```text
 mempalace-librarian/
 ├── README.md
-├── SKILL.md
-├── scripts/
-│   └── setup_mempalace.py
-└── tests/
-    └── test_setup_mempalace.py
+└── SKILL.md
 ```
 
 ## What Skill Does
 
 1. Detect current project root and likely wing.
-2. Ensure MemPalace CLI + MCP are usable.
-3. Use dedicated runtime at `$XDG_DATA_HOME/mempalace-librarian/venv` or `~/.local/share/mempalace-librarian/venv`.
-4. Create runtime only when missing; if existing runtime is broken, stop immediately without config writes.
-5. Rewire Codex CLI, Claude Code, and Gemini CLI MCP to the dedicated runtime on every run.
-6. Configure hooks (unless `--skip-hooks`) for all harnesses.
-5. Run narrow bootstrap:
+2. Verify MCP availability with `mempalace_status`.
+3. Stop immediately if MCP is unavailable.
+4. Run narrow bootstrap:
    - `mempalace_status`
    - `architecture`
    - `decisions`
    - one targeted search
    - one traversal
-7. Init/mine new or stale projects.
-8. File end-session diary, KG updates, and tunnel checks with duplicate gating.
+5. Init/mine new or stale projects.
+6. File end-session diary, KG updates, and tunnel checks with duplicate gating.
 
-## Setup Helper
+## Requirements
 
-Dry run:
+- MemPalace runtime must already be installed and configured for the harness.
+- MemPalace MCP server must be reachable from the active agent session.
+- If `mempalace_status` fails, stop and fix runtime/setup outside this skill.
 
-```bash
-python3 scripts/setup_mempalace.py --dry-run
-```
+Official install and setup steps:
+- https://mempalaceofficial.com/guide/getting-started
 
-Real run:
+## Scope Boundary
 
-```bash
-python3 scripts/setup_mempalace.py
-```
-
-Options:
-- `--install-source auto|local|pypi` (default: `pypi`)
-- `--repo ~/codes/mempalace`
-- `--palace /custom/palace/path`
-- `--skip-hooks`
-
-## Publish Notes
-
-Current quality bar:
-- script syntax checked
-- config merge behavior unit tested
-- MCP handshake verifier checks `initialize` + `tools/list`
-- temp-path smoke test covers Codex file writes
-
-Still recommended before broad public release:
-- run real install once on fresh machine or clean HOME
-- run live Codex MCP verification
-- run live Claude Code verification where `claude` CLI exists
+This skill does not:
+- create or repair virtual environments
+- install or upgrade MemPalace binaries
+- rewrite harness MCP/hook runtime configuration

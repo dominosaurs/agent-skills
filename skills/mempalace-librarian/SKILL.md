@@ -24,112 +24,28 @@ Goal: maximize knowledge per token.
 - MemPalace first, repo second.
 - If task needs memory, make MemPalace MCP work before normal project work.
 - Prefer MCP for reads/writes once available.
-- Use CLI for install, init, mine, status, optional `wake-up`; when possible, run it through the same interpreter MCP uses.
 - Keep retrieval narrow. Smallest useful context first.
-- If MemPalace cannot be made available, say so, do minimal local bootstrap, continue.
+- This skill assumes MemPalace runtime is already installed and configured.
+- If MemPalace MCP is unavailable, stop immediately.
 
 ## Fast Path
 
-1. Resolve dedicated runtime path:
-   - `$XDG_DATA_HOME/mempalace-librarian/venv` when `XDG_DATA_HOME` is set
-   - `~/.local/share/mempalace-librarian/venv` otherwise
-2. If missing, create and install MemPalace into that runtime.
-3. If present but broken, stop immediately without writing config/hook files.
-4. Resolve project root.
-5. Detect wing.
-6. Init/mine if new, unmined, or stale.
-7. Prove the mined wing is retrievable through MCP filters/search.
-8. Continue coding work.
+1. Call `mempalace_status`.
+2. If status call fails or is unavailable, stop immediately and report MCP unavailable.
+3. Resolve project root.
+4. Detect wing.
+5. Init/mine if new, unmined, or stale.
+6. Prove the mined wing is retrievable through MCP filters/search.
+7. Continue coding work.
 
-## Install / Repair
+## Requirements
 
-If memory matters and MemPalace missing or broken, make the same stack available to both CLI and MCP:
-- dedicated MemPalace venv
-- `mempalace` CLI
-- MCP server
-- hooks for supported harnesses
+- MemPalace must already be installed and configured in the active harness.
+- MCP server for MemPalace must be available to this agent session.
+- If MCP is unavailable, runtime repair is out of scope for this skill.
 
-Dedicated runtime path:
-- `$XDG_DATA_HOME/mempalace-librarian/venv` or `~/.local/share/mempalace-librarian/venv`
-
-Runtime policy:
-1. always use the dedicated runtime path above
-2. create runtime only when path is missing
-3. if existing runtime is broken, fail fast and do not auto-repair
-4. rewire Codex, Claude, and Gemini MCP configs to this runtime on every setup run
-5. preserve all non-MemPalace settings in those config files
-
-A runtime is healthy only when it passes:
-- `<python> -m mempalace status`
-- `<python> -c "import mempalace, mempalace.mcp_server"`
-- MCP initialize + tools/list handshake includes `mempalace_status`
-
-Do not install into project venv by default.
-
-Supported harness automation:
-- Codex CLI
-- Claude Code
-- Gemini CLI
-
-Default setup helper:
-- [`scripts/setup_mempalace.py`](./scripts/setup_mempalace.py)
-
-When using the helper, prefer `--install-source pypi` for normal users.
-Use `--install-source local` only when the user explicitly wants the development checkout.
-
-Repair order:
-1. verify Python 3.9+
-2. resolve dedicated runtime path
-3. create runtime only if missing
-4. verify package path and Chroma version for that runtime
-5. install/upgrade public `mempalace` unless user explicitly wants local dev checkout
-6. verify CLI status with the dedicated runtime interpreter
-7. verify `python -m mempalace.mcp_server`
-8. rewire Codex/Claude/Gemini MCP configs to dedicated runtime
-9. restart the MCP server or session if the running process loaded stale packages
-10. verify MCP responds with `mempalace_status`
-11. configure hooks
-12. continue project bootstrap
-
-Do not claim MemPalace ready until CLI, MCP, and hook config all check out through the same interpreter.
-
-If MCP still cannot be made available:
-- state failure
-- fall back local
-
-## CLI / MCP Parity
-
-Use this before mining or filing:
-- find the active interpreter for MCP
-- run CLI through that exact interpreter, e.g. `<python> -m mempalace status`
-- call `mempalace_status`
-- compare `palace_path`, total drawers, and expected wing counts
-
-If CLI works only outside the sandbox, note the sandbox limitation, but still require MCP proof.
-If MCP fails after package upgrades, restart the MCP server/session; `mempalace_reconnect` cannot reload already-imported Python packages.
-If MCP and CLI disagree, stop normal work and debug the mismatch first.
-
-## Chroma / Storage Repair
-
-Symptoms:
-- `mempalace mine` prints success but MCP does not show the wing
-- `add_drawer` returns success but search/list cannot retrieve it
-- `upsert()` returns no error but collection count does not increase
-- MCP says no palace while CLI with another venv works
-- search fails with `Error finding id` after a re-mine or drawer replacement
-
-Debug order:
-1. confirm the CLI and MCP use the same interpreter and Chroma version
-2. inspect `~/.mempalace/config.json` for `palace_path`
-3. compare `mempalace status` with `mempalace_status`
-4. run a temporary visible-write probe only when needed, then delete it
-5. inspect Chroma `seq_id` types and `max_seq_id` only after normal checks fail
-6. back up `chroma.sqlite3` before any direct SQLite repair
-7. repair BLOB `seq_id` values or rebuild collections only as a last resort
-8. restart MCP after collection rebuilds or package upgrades
-
-If drawer listing works but vector search fails with `Error finding id`, run `<mcp-python> -m mempalace repair --yes`, then `mempalace_reconnect`, then verify status/list/search again.
-Never trust CLI mine output alone. Success means nothing until MCP can list/search the wing.
+Official install and setup guide:
+- https://mempalaceofficial.com/guide/getting-started
 
 ## Project Root
 
@@ -332,14 +248,7 @@ Do not tunnel generic tech words, one-off coincidence, or temporary debugging ov
 
 ## Local Fallback
 
-If MemPalace unavailable after repair attempt:
+If MemPalace MCP is unavailable:
 - state that clearly
-- read only:
-  - repo root
-  - README
-  - `mempalace.yaml` and `entities.json` if present
-  - main project metadata files
-  - current task files
-- avoid broad repo scan unless needed
-
-Continue task. Do not stall.
+- stop immediately
+- do not continue memory-related or local fallback bootstrap work
