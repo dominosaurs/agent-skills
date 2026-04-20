@@ -38,6 +38,32 @@ Goal: maximize knowledge per token.
 6. Prove the mined wing is retrievable through MCP filters/search.
 7. Continue coding work.
 
+## Auto Activation For Context Fill
+
+Use this skill automatically when task-critical context is insufficient.
+
+Trigger condition:
+- context is insufficient when the agent cannot resolve task-critical who/what/why from current thread plus open files within 2 targeted local reads
+
+Skip condition:
+- skip auto-activation when the task is self-contained in currently open files and does not require cross-session or cross-project memory
+
+Decision tree:
+1. evaluate trigger condition
+2. if skip condition is true, continue task without librarian bootstrap
+3. if triggered, run minimal bootstrap budget (up to 6 MCP calls):
+   - `mempalace_status`
+   - `mempalace_list_drawers` for target wing (single page)
+   - one targeted `mempalace_search`
+   - optional `mempalace_follow_tunnels` (1 hop)
+   - optional second targeted `mempalace_search` if ambiguity remains
+4. if `mempalace_status` fails, stop immediately (hard-stop)
+5. if ambiguity remains after minimal budget, run one escalation step before repo-wide scanning:
+   - one additional room-specific `mempalace_list_drawers`
+   - one additional targeted `mempalace_search`
+6. if still insufficient, allow constrained local repo scan
+7. optimization commands are not auto-run from this flow; they remain explicit and non-default
+
 ## Requirements
 
 - MemPalace must already be installed and configured in the active harness.
@@ -46,6 +72,142 @@ Goal: maximize knowledge per token.
 
 Official install and setup guide:
 - https://mempalaceofficial.com/guide/getting-started
+
+## Auto Memory Store And Micro Optimization
+
+### Lifecycle Policy
+
+Auto store runs only at lifecycle checkpoints:
+
+1. `session_start`: read-only bootstrap, no writes
+2. `task_milestone`: conditional micro-store only when worth gate passes
+3. `session_end`: mandatory consolidated store
+
+Do not run continuous per-turn storage.
+
+### Worth Knowledge Gate
+
+At milestone, store only when knowledge is worth storing.
+
+Score range: `0-5`. Store if score is `>= 3`.
+
+Score components:
+
+1. durability (`0-2`): likely to remain true/useful
+2. reuse impact (`0-2`): likely to save future reasoning/time
+3. uniqueness (`0-1`): not already stored (duplicate gate passes)
+
+Milestone store candidates include:
+
+1. durable decision changes
+2. blocker root cause identified/fixed
+3. durable cross-wing relation
+4. durable user preference/constraint change
+
+### Confidence Gate
+
+Use confidence bands before auto-store:
+
+1. `>= 0.8`: eligible for auto-store
+2. `0.5-0.79`: suggestion only, no auto-write
+3. `< 0.5`: do not store unless explicitly requested
+
+Confidence must use observable signals:
+
+1. independent source count
+2. contradiction check result
+3. explicit user confirmation presence
+4. recency relevance
+5. duplicate similarity distance
+
+Override:
+- explicit user instruction for durable preference/constraint is treated as high-confidence store.
+
+### Duplicate Gate
+
+Run `mempalace_check_duplicate` before each write, including session-end flush.
+
+Default auto-store threshold: `0.92`.
+
+If duplicate similarity exceeds threshold:
+
+1. skip full write
+2. write tiny delta only if net-new durable information exists
+
+### Privacy And Redaction Gate
+
+Exclude sensitive categories from auto-store by default:
+
+1. secrets, tokens, credentials
+2. unnecessary personal identifiers
+3. highly sensitive personal/legal/medical data
+4. raw debug dumps/log blobs
+
+Redaction rules before storing:
+
+1. mask key-like strings
+2. remove exact paths unless required for retrieval
+3. replace raw IDs/emails with stable aliases where possible
+4. store decision summary, not raw payload
+
+### Micro Optimization Policy
+
+Run micro optimization after each successful store event, limited to touched scope only.
+
+Scope checks:
+
+1. duplicate sanity for touched room
+2. room assignment sanity
+3. wing naming normalization check for touched wing
+4. KG/tunnel consistency for touched entities only
+
+Default mode is non-destructive:
+
+1. detect and recommend
+2. no merge/move/delete without explicit approved execute step
+
+### Budget Controls
+
+Per milestone budget:
+
+1. max 1 diary write
+2. max 1 KG add/invalidate pair
+3. max 1 tunnel action
+4. max 8 MCP calls total for store + micro-optimization checks
+
+When budget is exceeded:
+
+1. defer remaining intents to queue
+2. flush at `session_end`
+
+### Queue, Ledger, And Artifacts
+
+Artifacts path:
+- `skills/mempalace-librarian/.artifacts/auto-store/`
+
+Files:
+
+1. `ledger-<session>.jsonl`
+2. `pending-store-<session>.json`
+3. `flush-report-<session-end>.json`
+
+Record each decision with reason code:
+
+1. `STORED_OK`
+2. `NOVELTY_LOW`
+3. `DUPLICATE_HIGH`
+4. `CONFIDENCE_LOW`
+5. `BUDGET_EXCEEDED`
+6. `SENSITIVE_REDACTED`
+
+### Session-End Compaction
+
+At `session_end`:
+
+1. flush pending queue with duplicate and confidence gates
+2. compact micro notes into one consolidated AAAK diary drawer
+3. derive KG/tunnel updates from consolidated durable facts only
+4. keep micro notes as operational artifacts, not long-term drawers
 
 ## Knowledge Partitioning Optimization
 
@@ -96,8 +258,10 @@ Strict command separation:
 
 1. `analyze`: diagnostics only, no writes
 2. `plan`: batch plan generation only, no writes
-3. `execute <phase> <batch-id>`: apply one approved batch (writes allowed)
+3. `execute <phase> <batch-id> --plan <plan.json> --approve-merge`: apply one approved merge batch (writes allowed)
 4. `rollback <batch-id>`: revert one executed batch
+5. `store-auto`: gated auto memory store event
+6. `flush-auto`: session-end deferred flush and summary compaction
 
 Command entrypoint:
 - `python skills/mempalace-librarian/scripts/partition_optimize.py <subcommand> ...`
@@ -114,12 +278,9 @@ If user says "optimize now" without phase or batch detail, default to `analyze` 
 - Batch size limits:
   - max 3 wing merges per batch, or
   - max 1 high-risk merge per batch
-- `safe-merge` is default behavior for wing merges.
+- only `merge` behavior is supported.
   - move source drawers to target
-  - keep source as deprecated alias marker
-- `hard-merge` requires explicit approval.
-  - move source drawers to target
-  - delete empty source wing
+  - source wing must end empty after execution
 
 ### Regression Checks
 

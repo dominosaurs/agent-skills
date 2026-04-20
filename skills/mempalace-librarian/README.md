@@ -34,6 +34,9 @@ mempalace-librarian/
 5. Init/mine new or stale projects.
 6. File end-session diary, KG updates, and tunnel checks with duplicate gating.
 
+Auto-activation policy:
+- auto-activates for context fill only when task-critical context is insufficient, with strict MCP-first budgeted bootstrap and hard-stop on MCP failure.
+
 ## Requirements
 
 - MemPalace runtime must already be installed and configured for the harness.
@@ -55,8 +58,13 @@ This skill does not:
 `partition_optimize.py` provides explicit optimization workflow commands:
 - `analyze`
 - `plan`
-- `execute <phase> <batch_id> --plan <plan.json>`
+- `execute <phase> <batch_id> --plan <plan.json> --approve-merge`
 - `rollback <batch_id>`
+- `store-auto --session-id ... --checkpoint ... --wing ... --room ...`
+- `flush-auto --session-id ... --summary-wing ... [--summary-room ...]`
+
+Merge policy:
+- only `merge` mode is supported for wing consolidation
 
 MCP resolution is agent-agnostic:
 - `--harness auto|codex|claude|gemini`
