@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -414,6 +415,11 @@ def ledger_row(
         "payload": payload,
     }
 
+
+def snapshot_hash(payload: dict[str, Any]) -> str:
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
 def latest_file(path: Path, prefix: str) -> Path | None:
     candidates = sorted(path.glob(f"{prefix}-*.json"), reverse=True)
     return candidates[0] if candidates else None
@@ -683,7 +689,7 @@ def run_analyze(client: MCPClient, artifacts_dir: Path) -> int:
     out = artifacts_dir / f"diagnostic-{now_utc_stamp()}.json"
     write_json(out, diagnostic)
     if triggered:
-        print("Optimization Suggested")
+        print("Memory Optimization Suggested")
         print(f"Diagnostic: {out}")
         print(f"Phase candidate: phase1 (wing normalization), collisions={len(collisions)}")
     else:
@@ -734,8 +740,9 @@ def run_regression_checks(
     for wing in sorted(set(target_wings)):
         try:
             payload = client.call_tool("mempalace_list_drawers", {"wing": wing, "limit": 1, "offset": 0})
-            ok = isinstance(payload, (dict, list, str))
-            result["checks"].append({"name": f"list_drawers:{wing}", "ok": ok})
+            drawers = parse_list_drawers_payload(payload)
+            ok = isinstance(payload, (dict, list)) and all(isinstance(item, dict) for item in drawers)
+            result["checks"].append({"name": f"list_drawers:{wing}", "ok": ok, "count": len(drawers)})
             if not ok:
                 result["ok"] = False
         except Exception as exc:  # pragma: no cover
@@ -829,10 +836,14 @@ def run_execute(
     batch_log = artifacts_dir / f"batch-{timestamp}-{batch_id}.jsonl"
     rollback_log = artifacts_dir / f"rollback-{timestamp}-{batch_id}.json"
     regression_log = artifacts_dir / f"regression-{timestamp}-{batch_id}.json"
+    snapshot_log = artifacts_dir / f"snapshot-{timestamp}-{batch_id}.json"
 
     mutations: list[dict[str, Any]] = []
+    snapshots: list[dict[str, Any]] = []
     source_wings: list[str] = []
     target_wings: list[str] = []
+    if not client.has_tool("mempalace_get_drawer"):
+        raise SystemExit("MCP server missing mempalace_get_drawer; cannot create pre-batch snapshot manifest")
     for op in batch.get("operations", []):
         source = op["source_wing"]
         target = op["target_wing"]
@@ -843,6 +854,10 @@ def run_execute(
             drawer_id = drawer.get("id") or drawer.get("drawer_id")
             if not drawer_id:
                 continue
+            before = client.call_tool("mempalace_get_drawer", {"drawer_id": drawer_id})
+            if not isinstance(before, dict):
+                raise SystemExit(f"Failed to snapshot drawer before merge: {drawer_id}")
+            snapshots.append({"drawer_id": drawer_id, "before": before, "hash": snapshot_hash(before)})
             client.call_tool("mempalace_update_drawer", {"drawer_id": drawer_id, "wing": target})
             mutations.append(
                 {
@@ -855,12 +870,22 @@ def run_execute(
 
     append_jsonl(batch_log, mutations)
     write_json(
+        snapshot_log,
+        {
+            "generated_at": timestamp,
+            "phase": phase,
+            "batch_id": batch_id,
+            "entries": snapshots,
+        },
+    )
+    write_json(
         rollback_log,
         {
             "generated_at": timestamp,
             "phase": phase,
             "batch_id": batch_id,
             "entries": mutations,
+            "snapshot_manifest": str(snapshot_log),
         },
     )
     check_tunnels = phase in {"phase4"}
@@ -882,6 +907,7 @@ def run_execute(
                 "batch_id": batch_id,
                 "rolled_back": True,
                 "entries": mutations,
+                "snapshot_manifest": str(snapshot_log),
             },
         )
         raise SystemExit("Regression checks failed; batch rolled back")
@@ -1010,14 +1036,21 @@ def run_store_auto(client: MCPClient, args: argparse.Namespace, artifacts_dir: P
         return 0
 
     future_write_calls = 1
-    if args.kg_subject and args.kg_predicate and args.kg_object:
+    kg_requested = bool(args.kg_subject and args.kg_predicate and args.kg_object)
+    tunnel_requested = bool(
+        args.tunnel_source_wing
+        and args.tunnel_source_room
+        and args.tunnel_target_wing
+        and args.tunnel_target_room
+    )
+    if kg_requested:
         future_write_calls += 1
-    if args.tunnel_source_wing and args.tunnel_source_room and args.tunnel_target_wing and args.tunnel_target_room:
+    if tunnel_requested:
         future_write_calls += 1
     projected_delta = {
         "diary_writes": 1,
-        "kg_pairs": 1 if args.kg_subject else 0,
-        "tunnel_actions": 1 if args.tunnel_source_wing else 0,
+        "kg_pairs": 1 if kg_requested else 0,
+        "tunnel_actions": 1 if tunnel_requested else 0,
         "mcp_calls": (client.tool_calls - start_calls) + future_write_calls,
     }
     if args.checkpoint == "task_milestone" and budget_exceeded(pending, projected_delta):
@@ -1056,12 +1089,12 @@ def run_store_auto(client: MCPClient, args: argparse.Namespace, artifacts_dir: P
 
     redacted = redact_content(content)
     client.call_tool("mempalace_add_drawer", {"wing": args.wing, "room": args.room, "content": redacted, "added_by": "librarian-auto"})
-    if args.kg_subject and args.kg_predicate and args.kg_object:
+    if kg_requested:
         client.call_tool(
             "mempalace_kg_add",
             {"subject": args.kg_subject, "predicate": args.kg_predicate, "object": args.kg_object},
         )
-    if args.tunnel_source_wing and args.tunnel_source_room and args.tunnel_target_wing and args.tunnel_target_room:
+    if tunnel_requested:
         client.call_tool(
             "mempalace_create_tunnel",
             {
@@ -1206,7 +1239,7 @@ def run_flush_auto(client: MCPClient, args: argparse.Namespace, artifacts_dir: P
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Knowledge Partitioning Optimization CLI")
+    parser = argparse.ArgumentParser(description="Memory Partitioning Optimization CLI")
     parser.add_argument("--artifacts-dir", default=str(ARTIFACTS_DIR))
     parser.add_argument("--auto-store-dir", default=str(AUTO_STORE_DIR))
     parser.add_argument(

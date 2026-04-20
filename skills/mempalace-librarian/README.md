@@ -27,8 +27,8 @@ mempalace-librarian/
 3. Stop immediately if MCP is unavailable.
 4. Run narrow bootstrap:
    - `mempalace_status`
-   - `architecture`
-   - `decisions`
+   - target wing drawer listing (single page)
+   - most relevant project-specific rooms
    - one targeted search
    - one traversal
 5. Init/mine new or stale projects.

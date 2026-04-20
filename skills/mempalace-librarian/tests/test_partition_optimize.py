@@ -283,6 +283,124 @@ class PartitionOptimizeTests(unittest.TestCase):
             pending = json.loads((Path(tmp) / "pending-store-s1.json").read_text(encoding="utf-8"))
             self.assertEqual(pending["usage"]["mcp_calls"], 2)
 
+    def test_run_store_auto_partial_kg_tunnel_args_do_not_consume_action_budget(self) -> None:
+        class FakeClient:
+            def __init__(self) -> None:
+                self.tool_calls = 0
+
+            def call_tool(self, name: str, arguments: dict) -> dict:
+                self.tool_calls += 1
+                _ = arguments
+                if name == "mempalace_status":
+                    return {"wings": {"w1": 1}}
+                if name == "mempalace_check_duplicate":
+                    return {"is_duplicate": False, "similarity": 0.1}
+                if name == "mempalace_add_drawer":
+                    return {"ok": True}
+                raise AssertionError(name)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            args = type(
+                "Args",
+                (),
+                {
+                    "session_id": "s1",
+                    "checkpoint": "task_milestone",
+                    "wing": "w1",
+                    "room": "decisions",
+                    "content_file": None,
+                    "content": "durable milestone",
+                    "durability": 2,
+                    "reuse_impact": 2,
+                    "uniqueness": 1,
+                    "confidence": 0.95,
+                    "source_count": 2,
+                    "contradiction_check": "pass",
+                    "recency_days": 0,
+                    "sensitive": False,
+                    "user_confirmed": False,
+                    "user_instruction": False,
+                    "kg_subject": "project-x",
+                    "kg_predicate": None,
+                    "kg_object": None,
+                    "tunnel_source_wing": "w1",
+                    "tunnel_source_room": None,
+                    "tunnel_target_wing": None,
+                    "tunnel_target_room": None,
+                    "tunnel_label": None,
+                },
+            )()
+            code = partition_optimize.run_store_auto(FakeClient(), args, Path(tmp))
+            self.assertEqual(code, 0)
+            pending = json.loads((Path(tmp) / "pending-store-s1.json").read_text(encoding="utf-8"))
+            self.assertEqual(pending["usage"]["diary_writes"], 1)
+            self.assertEqual(pending["usage"]["kg_pairs"], 0)
+            self.assertEqual(pending["usage"]["tunnel_actions"], 0)
+
+    def test_run_execute_requires_snapshot_tool(self) -> None:
+        class FakeClient:
+            def has_tool(self, name: str) -> bool:
+                return False
+
+            def call_tool(self, name: str, arguments: dict):
+                _ = (name, arguments)
+                raise AssertionError("call_tool should not be reached")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            plan_path = Path(tmp) / "plan.json"
+            plan_path.write_text(
+                json.dumps(
+                    {
+                        "batches": [
+                            {
+                                "phase": "phase1",
+                                "id": "phase1-b1",
+                                "operations": [
+                                    {
+                                        "source_wing": "a",
+                                        "target_wing": "b",
+                                        "mode": "merge",
+                                        "risk": "medium",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(SystemExit):
+                partition_optimize.run_execute(
+                    FakeClient(),
+                    "phase1",
+                    "phase1-b1",
+                    True,
+                    plan_path,
+                    Path(tmp),
+                )
+
+    def test_run_regression_checks_rejects_non_structured_drawer_payload(self) -> None:
+        class FakeClient:
+            def has_tool(self, name: str) -> bool:
+                return False
+
+            def call_tool(self, name: str, arguments: dict):
+                _ = arguments
+                if name == "mempalace_status":
+                    return {"ok": True}
+                if name == "mempalace_list_drawers":
+                    return "unexpected-string"
+                raise AssertionError(name)
+
+        result = partition_optimize.run_regression_checks(
+            FakeClient(),
+            source_wings=[],
+            target_wings=["w1"],
+            check_tunnels=False,
+            check_kg=False,
+        )
+        self.assertFalse(result["ok"])
+
     def test_run_flush_auto_compacts_and_dedupes_kg_tunnel(self) -> None:
         class FakeClient:
             def __init__(self) -> None:
