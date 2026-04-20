@@ -55,7 +55,7 @@ This skill does not:
 
 ## Command Surface
 
-`partition_optimize.py` provides explicit optimization workflow commands:
+`partition_optimize.py` provides explicit memory optimization workflow commands:
 - `analyze`
 - `plan`
 - `execute <phase> <batch_id> --plan <plan.json> --approve-merge`
@@ -69,3 +69,71 @@ Merge policy:
 MCP resolution is agent-agnostic:
 - `--harness auto|codex|claude|gemini`
 - explicit override via `--mcp-command` and repeated `--mcp-arg`
+
+## Behavior Summary
+
+Runtime and bootstrap:
+- hard-stop when `mempalace_status` is unavailable
+- bounded MCP-first context fill before local broad scans
+
+Memory optimization:
+- explicit workflow only: `analyze` -> `plan` -> approved `execute` -> `rollback`
+- `execute` requires `--approve-merge`
+- post-execute regression checks must pass before continuing
+
+Auto store:
+- checkpoint lifecycle: `session_start` (read-only), `task_milestone` (gated), `session_end` (consolidation)
+- gates: duplicate, confidence, privacy/redaction, milestone budget
+
+Flush behavior:
+- `flush-auto` compacts deferred notes into one consolidated summary drawer
+- derives deduped KG/tunnel updates from consolidated deferred durable facts
+
+## Operator Quickstart
+
+Analyze:
+
+```bash
+python skills/mempalace-librarian/scripts/partition_optimize.py analyze --harness auto
+```
+
+Plan from latest diagnostic:
+
+```bash
+python skills/mempalace-librarian/scripts/partition_optimize.py plan --harness auto
+```
+
+Execute approved merge batch:
+
+```bash
+python skills/mempalace-librarian/scripts/partition_optimize.py execute phase1 phase1-b1 --plan /path/to/plan.json --approve-merge --harness auto
+```
+
+Rollback batch:
+
+```bash
+python skills/mempalace-librarian/scripts/partition_optimize.py rollback phase1-b1 --harness auto
+```
+
+Store auto event:
+
+```bash
+python skills/mempalace-librarian/scripts/partition_optimize.py store-auto \
+  --session-id s1 \
+  --checkpoint task_milestone \
+  --wing project-a \
+  --room decisions \
+  --content "Decision summary" \
+  --durability 2 \
+  --reuse-impact 2 \
+  --uniqueness 1 \
+  --confidence 0.9 \
+  --source-count 2 \
+  --contradiction-check pass
+```
+
+Flush deferred consolidation:
+
+```bash
+python skills/mempalace-librarian/scripts/partition_optimize.py flush-auto --session-id s1 --summary-wing project-a --summary-room diary --harness auto
+```

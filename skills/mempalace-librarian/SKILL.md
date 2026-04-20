@@ -1,7 +1,7 @@
 ---
 name: mempalace-librarian
 description: >
-  Librarian for MemPalace. Keep project and session knowledge organized,
+  Librarian for MemPalace. Keep project and session memory organized,
   connected, retrievable, and token-cheap. Ensure MemPalace MCP works when
   needed, bootstrap context narrowly, mine new or stale projects, and file
   dense AAAK memory with durable graph links.
@@ -12,12 +12,15 @@ description: >
 You are librarian for long-term AI memory.
 
 Job:
-- organize knowledge
-- manage memory system
-- provide fast access to right context
-- keep related knowledge connected
+- enforce MCP-first memory operations (`mempalace_status` must succeed before memory flow)
+- bootstrap minimal context with bounded MCP calls before broad local scanning
+- run gated auto-store at lifecycle checkpoints (`session_start`, `task_milestone`, `session_end`)
+- keep durable memory quality high with duplicate, confidence, privacy, and budget gates
+- run memory optimization through explicit workflow (`analyze` -> `plan` -> approved `execute` -> `rollback`)
+- apply merge-only wing consolidation with explicit approval and regression checks
+- keep cross-project durability via constrained KG and tunnel updates
 
-Goal: maximize knowledge per token.
+Goal: maximize memory signal per token.
 
 ## Core Rules
 
@@ -27,6 +30,8 @@ Goal: maximize knowledge per token.
 - Keep retrieval narrow. Smallest useful context first.
 - This skill assumes MemPalace runtime is already installed and configured.
 - If MemPalace MCP is unavailable, stop immediately.
+- Do not mutate memory optimization state without explicit execute approval.
+- Use only `merge` behavior for wing consolidation.
 
 ## Fast Path
 
@@ -62,7 +67,7 @@ Decision tree:
    - one additional room-specific `mempalace_list_drawers`
    - one additional targeted `mempalace_search`
 6. if still insufficient, allow constrained local repo scan
-7. optimization commands are not auto-run from this flow; they remain explicit and non-default
+7. memory optimization commands are not auto-run from this flow; they remain explicit and non-default
 
 ## Requirements
 
@@ -73,7 +78,7 @@ Decision tree:
 Official install and setup guide:
 - https://mempalaceofficial.com/guide/getting-started
 
-## Auto Memory Store And Micro Optimization
+## Auto Memory Store And Micro Memory Optimization
 
 ### Lifecycle Policy
 
@@ -85,9 +90,9 @@ Auto store runs only at lifecycle checkpoints:
 
 Do not run continuous per-turn storage.
 
-### Worth Knowledge Gate
+### Worth Memory Gate
 
-At milestone, store only when knowledge is worth storing.
+At milestone, store only when memory is worth storing.
 
 Score range: `0-5`. Store if score is `>= 3`.
 
@@ -150,9 +155,9 @@ Redaction rules before storing:
 3. replace raw IDs/emails with stable aliases where possible
 4. store decision summary, not raw payload
 
-### Micro Optimization Policy
+### Micro Memory Optimization Policy
 
-Run micro optimization after each successful store event, limited to touched scope only.
+Run micro memory optimization after each successful store event, limited to touched scope only.
 
 Scope checks:
 
@@ -173,7 +178,7 @@ Per milestone budget:
 1. max 1 diary write
 2. max 1 KG add/invalidate pair
 3. max 1 tunnel action
-4. max 8 MCP calls total for store + micro-optimization checks
+4. max 8 MCP calls total for store + micro-memory-optimization checks
 
 When budget is exceeded:
 
@@ -209,13 +214,13 @@ At `session_end`:
 3. derive KG/tunnel updates from consolidated durable facts only
 4. keep micro notes as operational artifacts, not long-term drawers
 
-## Knowledge Partitioning Optimization
+## Memory Partitioning Optimization
 
 ### Scope
 
-- This policy optimizes MemPalace knowledge partitioning phase-by-phase.
-- Optimization is not default behavior.
-- Optimization can run only when symptoms are detected.
+- This policy optimizes MemPalace memory partitioning phase-by-phase.
+- Memory optimization is not default behavior.
+- Memory optimization can run only when symptoms are detected.
 - If `mempalace_status` fails, stop immediately; do not run optimize diagnostics or mutations.
 
 ### Terminology
@@ -234,7 +239,7 @@ At `session_end`:
 
 ### Triggers
 
-Run optimization diagnostics only when at least one trigger is true:
+Run memory optimization diagnostics only when at least one trigger is true:
 
 1. wing-name collision trigger: two or more wings normalize to the same canonical key
 2. duplicate-hit trigger: for baseline scoped queries, 30% or more of top-10 hits are cross-wing near-duplicates
@@ -261,7 +266,7 @@ Strict command separation:
 3. `execute <phase> <batch-id> --plan <plan.json> --approve-merge`: apply one approved merge batch (writes allowed)
 4. `rollback <batch-id>`: revert one executed batch
 5. `store-auto`: gated auto memory store event
-6. `flush-auto`: session-end deferred flush and summary compaction
+6. `flush-auto`: session-end deferred consolidation and derived durable updates
 
 Command entrypoint:
 - `python skills/mempalace-librarian/scripts/partition_optimize.py <subcommand> ...`
@@ -329,7 +334,7 @@ Fail closed: if any check fails, stop further batches.
 
 ### User Notice
 
-When triggers are detected, emit concise `Optimization Suggested` notice:
+When triggers are detected, emit concise `Memory Optimization Suggested` notice:
 
 1. phase candidate
 2. symptom summary and affected scope
@@ -516,7 +521,7 @@ No transient debug state in KG.
 
 ## Tunnels
 
-Keep knowledge connected across projects.
+Keep memory connected across projects.
 
 Use proactive, rule-based tunneling.
 
