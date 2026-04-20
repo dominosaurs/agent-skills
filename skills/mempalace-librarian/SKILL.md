@@ -47,6 +47,130 @@ Goal: maximize knowledge per token.
 Official install and setup guide:
 - https://mempalaceofficial.com/guide/getting-started
 
+## Knowledge Partitioning Optimization
+
+### Scope
+
+- This policy optimizes MemPalace knowledge partitioning phase-by-phase.
+- Optimization is not default behavior.
+- Optimization can run only when symptoms are detected.
+- If `mempalace_status` fails, stop immediately; do not run optimize diagnostics or mutations.
+
+### Terminology
+
+- canonical wing naming standard: `kebab-case`
+- normalization rules:
+  - lowercase letters and digits only
+  - words separated by single `-`
+  - remove leading punctuation/underscores
+  - normalize `_` to `-`
+  - disallow `wing-` prefix unless literally part of project name
+- examples:
+  - `.gemini` -> `gemini`
+  - `wing_gemini_cli` -> `gemini-cli`
+  - `agent_skills` -> `agent-skills`
+
+### Triggers
+
+Run optimization diagnostics only when at least one trigger is true:
+
+1. wing-name collision trigger: two or more wings normalize to the same canonical key
+2. duplicate-hit trigger: for baseline scoped queries, 30% or more of top-10 hits are cross-wing near-duplicates
+3. ambiguity trigger: 3 or more wings appear in top-10 for a project-scoped query
+4. tunnel redundancy trigger: 2 or more tunnels represent the same source-target semantic intent
+5. KG conflict trigger: any active conflicting triple with same `subject+predicate` and no invalidation chain
+
+### Phases
+
+1. phase 1: wing normalization and alias consolidation
+2. phase 2: room normalization inside canonical wings
+3. phase 3: drawer atomization and dedup quality pass
+4. phase 4: tunnel pruning and durable-link completion
+5. phase 5: KG integrity pass (invalidate stale, add missing durable facts)
+
+Do not progress to the next phase until current phase regression checks pass.
+
+### Command Contract
+
+Strict command separation:
+
+1. `analyze`: diagnostics only, no writes
+2. `plan`: batch plan generation only, no writes
+3. `execute <phase> <batch-id>`: apply one approved batch (writes allowed)
+4. `rollback <batch-id>`: revert one executed batch
+
+If user says "optimize now" without phase or batch detail, default to `analyze` only.
+
+### Approval Gates
+
+- Approval unit is phase + batch.
+- No mutations happen without explicit approval for the current batch.
+- Batch size limits:
+  - max 3 wing merges per batch, or
+  - max 1 high-risk merge per batch
+- `safe-merge` is default behavior for wing merges.
+  - move source drawers to target
+  - keep source as deprecated alias marker
+- `hard-merge` requires explicit approval.
+  - move source drawers to target
+  - delete empty source wing
+
+### Regression Checks
+
+Run after every executed batch:
+
+1. `mempalace_status` succeeds
+2. `mempalace_list_drawers(wing=...)` succeeds for affected canonical wings
+3. representative `mempalace_search` queries show expected precision/ambiguity profile
+4. if phase touches tunnels or KG, run tunnel/KG consistency checks
+
+Fail closed: if any check fails, stop further batches.
+
+### Rollback
+
+- Create pre-batch snapshot manifest with drawer ids, source/target, and metadata hash.
+- Record reversible mutation log for each change.
+- On regression failure:
+  1. rollback current batch automatically
+  2. validate post-rollback with status/list/search
+  3. mark batch as blocked for manual review
+  4. do not continue to the next batch or phase
+
+### Diagnostics Artifacts
+
+- Store operational artifacts at:
+  - `skills/mempalace-librarian/.artifacts/partition-optimization/`
+- Files:
+  - `diagnostic-<timestamp>.json`
+  - `plan-<timestamp>.json`
+  - `batch-<timestamp>.jsonl`
+  - `rollback-<timestamp>.json`
+  - `regression-<timestamp>.json`
+- Do not auto-file these artifacts into MemPalace drawers or KG.
+
+### Baseline Query Set
+
+- Use a hybrid baseline for reproducible diagnostics:
+  1. static core queries (stable comparison)
+  2. dynamic add-on queries from current top wings/rooms
+- Dynamic caps:
+  - max 10 dynamic queries total
+  - max 2 dynamic queries per top wing
+  - target analysis budget: 30 or fewer search/list calls
+  - stop early when trigger evidence is sufficient
+- Report static and dynamic metrics separately.
+
+### User Notice
+
+When triggers are detected, emit concise `Optimization Suggested` notice:
+
+1. phase candidate
+2. symptom summary and affected scope
+3. estimated calls and token-cost range
+4. risk level
+5. expected quality gain
+6. recommended next command (`analyze` or `plan`)
+
 ## Project Root
 
 Current project:
@@ -245,10 +369,3 @@ Before explicit tunnel:
 5. verify new tunnel with `mempalace_follow_tunnels` or `mempalace_list_tunnels`
 
 Do not tunnel generic tech words, one-off coincidence, or temporary debugging overlap.
-
-## Local Fallback
-
-If MemPalace MCP is unavailable:
-- state that clearly
-- stop immediately
-- do not continue memory-related or local fallback bootstrap work
