@@ -5,3 +5,5 @@ __pycache__/
 
 mempalace.yaml
 entities.json
+
+skills/mempalace-librarian/.artifacts/

@@ -22,8 +22,8 @@ jobs:
       - name: Syntax check
         run: |
           python -m py_compile \
-            skills/mempalace-librarian/scripts/setup_mempalace.py \
-            skills/mempalace-librarian/tests/test_setup_mempalace.py
+            skills/mempalace-librarian/scripts/partition_optimize.py \
+            skills/mempalace-librarian/tests/test_partition_optimize.py
 
       - name: Unit tests
         run: |
@@ -31,12 +31,6 @@ jobs:
             -s skills/mempalace-librarian/tests \
             -p 'test_*.py' -v
 
-      - name: Dry-run Codex setup
+      - name: CLI Help Smoke
         run: |
-          python skills/mempalace-librarian/scripts/setup_mempalace.py \
-            --dry-run --harness codex
-
-      - name: Dry-run Gemini setup
-        run: |
-          python skills/mempalace-librarian/scripts/setup_mempalace.py \
-            --dry-run --harness gemini
+          python skills/mempalace-librarian/scripts/partition_optimize.py --help

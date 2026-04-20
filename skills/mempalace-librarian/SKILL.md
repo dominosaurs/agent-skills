@@ -99,6 +99,12 @@ Strict command separation:
 3. `execute <phase> <batch-id>`: apply one approved batch (writes allowed)
 4. `rollback <batch-id>`: revert one executed batch
 
+Command entrypoint:
+- `python skills/mempalace-librarian/scripts/partition_optimize.py <subcommand> ...`
+- agent-agnostic MCP resolution:
+  - `--harness auto|codex|claude|gemini`
+  - explicit override: `--mcp-command <cmd> --mcp-arg <arg> ...`
+
 If user says "optimize now" without phase or batch detail, default to `analyze` only.
 
 ### Approval Gates
@@ -233,24 +239,24 @@ Mining check:
 4. call targeted `mempalace_search(..., wing=<wing>)`
 
 If not initialized:
-- run `mempalace init <repo-root>`
 - inspect/curate `mempalace.yaml` and `entities.json`
+- run project initialization flow through the available MemPalace interface
 - then mine or re-mine if needed
 
 If initialized but not mined:
-- run `mempalace mine <repo-root>`
+- run project mining flow through the available MemPalace interface
 - verify MCP status/list/search
 
 ## New / Unmined / Stale Project
 
 New project:
-- `mempalace init <repo-root>`
 - review/curate `mempalace.yaml` and `entities.json`
-- default `mempalace mine <repo-root>`
+- run project initialization flow through the available MemPalace interface
+- default project mining flow through the available MemPalace interface
 
 Existing but unmined/stale:
 - review/curate `mempalace.yaml` and `entities.json` when present or useful
-- default `mempalace mine <repo-root>`
+- default project mining flow through the available MemPalace interface
 
 Prefer one mine now over repeated repo rereads.
 

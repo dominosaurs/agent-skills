@@ -13,7 +13,9 @@ agent-skills/
         ├── README.md
         ├── SKILL.md
         ├── scripts/
+        │   └── partition_optimize.py
         └── tests/
+            └── test_partition_optimize.py
 ```
 
 ## Skills

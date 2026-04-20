@@ -13,7 +13,11 @@ Purpose:
 ```text
 mempalace-librarian/
 ├── README.md
-└── SKILL.md
+├── SKILL.md
+├── scripts/
+│   └── partition_optimize.py
+└── tests/
+    └── test_partition_optimize.py
 ```
 
 ## What Skill Does
@@ -45,3 +49,15 @@ This skill does not:
 - create or repair virtual environments
 - install or upgrade MemPalace binaries
 - rewrite harness MCP/hook runtime configuration
+
+## Command Surface
+
+`partition_optimize.py` provides explicit optimization workflow commands:
+- `analyze`
+- `plan`
+- `execute <phase> <batch_id> --plan <plan.json>`
+- `rollback <batch_id>`
+
+MCP resolution is agent-agnostic:
+- `--harness auto|codex|claude|gemini`
+- explicit override via `--mcp-command` and repeated `--mcp-arg`
